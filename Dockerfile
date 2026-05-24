@@ -35,6 +35,7 @@ FROM ubuntu:24.04@${UBUNTU_DIGEST} AS fetcher
 
 # hadolint ignore=DL3008,DL3015
 RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
         wget && \
@@ -90,6 +91,7 @@ FROM eclipse-temurin:25-jdk AS patcher-builder
 
 # hadolint ignore=DL3008
 RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         maven && \
     rm -rf /var/lib/apt/lists/*
@@ -164,7 +166,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the openjdk-8-jre-headless equivs stub BEFORE this apt-install so the
 # unifi-video .deb's hard-coded Depends: line resolves; the stub is a
 # zero-file metapackage, the real JRE is Canonical's openjdk-21-jre-headless.
+#
+# Phase 4 follow-up (v3.10.13-17): `apt-get -y upgrade` pulls pending
+# noble-security patches for transitive dependencies already present in
+# the base image (libgnutls30t64, sed, libc6, etc.).  Without it, those
+# packages stay frozen at the version baked into the `ubuntu:24.04`
+# digest pin until Docker Hub republishes the tag -- which can lag the
+# noble-security pool by weeks.  The Maven Central artifacts and the
+# libssl1.1 deb remain SHA256-pinned (no freshness in those paths); only
+# the Canonical-signed apt pool gains freshness.
 RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \
     apt-get install -y --no-install-recommends \
         adduser \
         ca-certificates \
