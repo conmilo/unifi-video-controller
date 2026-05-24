@@ -441,7 +441,7 @@ RUN set -eux; \
         tomcat-dbcp.jar \
         tomcat-embed-logging-juli.jar \
         tomcat-embed-logging-log4j.jar \
-        *.jar~; \
+        ./*.jar~; \
     \
     # Cleanup tmp scratch. \
     rm -rf /tmp/*.jar
