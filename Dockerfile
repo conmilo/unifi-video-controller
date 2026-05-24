@@ -70,6 +70,8 @@ RUN set -eux; \
     wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-jasper/9.0.118/tomcat-embed-jasper-9.0.118.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-websocket/9.0.118/tomcat-embed-websocket-9.0.118.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/tomcat/tomcat-dbcp/9.0.118/tomcat-dbcp-9.0.118.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/httpcomponents/httpclient/4.5.14/httpclient-4.5.14.jar; \
+    wget -q https://repo1.maven.org/maven2/org/mindrot/jbcrypt/0.4/jbcrypt-0.4.jar; \
     sha256sum -c SHA256SUMS
 
 # ---------------------------------------------------------------------------
@@ -372,6 +374,18 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 #                                       in 9.x).
 # - tomcat-embed-logging-log4j.jar:     REMOVED (no Tomcat 9 equivalent; airvision
 #                                       uses log4j 2.19.0 directly; bridge unused).
+# - httpclient 4.5.1 -> 4.5.14:         closes CVE-2020-13956 (incorrect handling
+#                                       of malformed authority component in
+#                                       request URIs).  4.5.x is ABI-stable
+#                                       within minor; drop-in.  Phase 4 bump.
+# - jbcrypt 0.3m -> 0.4:                closes CVE-2015-0886 (integer overflow
+#                                       in crypt_raw).  0.4 adds bounds checking
+#                                       on log_rounds; the BCrypt.hashpw /
+#                                       checkpw / gensalt API is unchanged and
+#                                       the crypto output is byte-identical for
+#                                       any (password, salt) input -- existing
+#                                       bcrypt hashes in the user DB remain
+#                                       valid.  Phase 4 bump.
 COPY --from=fetcher /artifacts/log4j-slf4j-impl-2.19.0.jar                   /tmp/log4j-slf4j-impl-2.19.0.jar
 COPY --from=fetcher /artifacts/commons-io-2.18.0.jar                         /tmp/commons-io-2.18.0.jar
 COPY --from=fetcher /artifacts/commons-beanutils-1.11.0.jar                  /tmp/commons-beanutils-1.11.0.jar
@@ -385,6 +399,8 @@ COPY --from=fetcher /artifacts/tomcat-embed-el-9.0.118.jar                   /tm
 COPY --from=fetcher /artifacts/tomcat-embed-jasper-9.0.118.jar               /tmp/tomcat-embed-jasper-9.0.118.jar
 COPY --from=fetcher /artifacts/tomcat-embed-websocket-9.0.118.jar            /tmp/tomcat-embed-websocket-9.0.118.jar
 COPY --from=fetcher /artifacts/tomcat-dbcp-9.0.118.jar                       /tmp/tomcat-dbcp-9.0.118.jar
+COPY --from=fetcher /artifacts/httpclient-4.5.14.jar                         /tmp/httpclient-4.5.14.jar
+COPY --from=fetcher /artifacts/jbcrypt-0.4.jar                               /tmp/jbcrypt-0.4.jar
 RUN set -eux; \
     cd /usr/lib/unifi-video/lib; \
     \
@@ -427,6 +443,8 @@ RUN set -eux; \
     install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-jasper-9.0.118.jar                     ./tomcat-embed-jasper-9.0.118.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-websocket-9.0.118.jar                  ./tomcat-embed-websocket-9.0.118.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-dbcp-9.0.118.jar                             ./tomcat-dbcp-9.0.118.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/httpclient-4.5.14.jar                               ./httpclient-4.5.14.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/jbcrypt-0.4.jar                                     ./jbcrypt-0.4.jar; \
     \
     # Remove the original .deb-installed legacy filenames (and any .jar~ \
     # backup leftovers from earlier image layers).  Each rm corresponds to \
@@ -453,6 +471,8 @@ RUN set -eux; \
         tomcat-dbcp.jar \
         tomcat-embed-logging-juli.jar \
         tomcat-embed-logging-log4j.jar \
+        httpclient-4.5.1.jar \
+        jbcrypt-0.3m.jar \
         ./*.jar~; \
     \
     # Cleanup tmp scratch. \
