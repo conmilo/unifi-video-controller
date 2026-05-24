@@ -59,7 +59,7 @@ RUN set -eux; \
     wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j-impl/2.19.0/log4j-slf4j-impl-2.19.0.jar; \
     wget -q https://repo1.maven.org/maven2/commons-io/commons-io/2.18.0/commons-io-2.18.0.jar; \
-    wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.15.4/jackson-core-2.15.4.jar; \
+    wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.19.0/jackson-core-2.19.0.jar; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.12.7.2/jackson-databind-2.12.7.2.jar; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.12.7/jackson-annotations-2.12.7.jar; \
     wget -q https://repo1.maven.org/maven2/commons-beanutils/commons-beanutils/1.11.0/commons-beanutils-1.11.0.jar; \
@@ -338,7 +338,10 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 # - commons-io 2.6 -> 2.18.0:           closes CVE-2024-47554.
 # - commons-beanutils 1.7.0 -> 1.11.0:  closes CVE-2019-10086, CVE-2025-48734.
 # - jackson-databind 2.7.4 -> 2.12.7.2: closes ALL 52 historical databind CVEs.
-# - jackson-core 2.7.4 -> 2.15.4:       closes CVE-2025-52999.
+# - jackson-core 2.7.4 -> 2.19.0:       closes CVE-2025-52999 (Phase 2A.1
+#                                       in v3.10.13-12 bumped to 2.15.4;
+#                                       Phase 4 in v3.10.13-16 bumps further
+#                                       to 2.19.0 to close GHSA-72hv-8253-57qq).
 # - jackson-annotations 2.7.2 -> 2.12.7: lockstep with databind.
 # - jettison 1.1 -> 1.5.4:              closes CVE-2022-40150, -45685, -45693,
 #                                       CVE-2023-1436.
@@ -373,7 +376,7 @@ COPY --from=fetcher /artifacts/log4j-slf4j-impl-2.19.0.jar                   /tm
 COPY --from=fetcher /artifacts/commons-io-2.18.0.jar                         /tmp/commons-io-2.18.0.jar
 COPY --from=fetcher /artifacts/commons-beanutils-1.11.0.jar                  /tmp/commons-beanutils-1.11.0.jar
 COPY --from=fetcher /artifacts/jackson-databind-2.12.7.2.jar                 /tmp/jackson-databind-2.12.7.2.jar
-COPY --from=fetcher /artifacts/jackson-core-2.15.4.jar                       /tmp/jackson-core-2.15.4.jar
+COPY --from=fetcher /artifacts/jackson-core-2.19.0.jar                       /tmp/jackson-core-2.19.0.jar
 COPY --from=fetcher /artifacts/jackson-annotations-2.12.7.jar                /tmp/jackson-annotations-2.12.7.jar
 COPY --from=fetcher /artifacts/json-sanitizer-1.2.3.jar                      /tmp/json-sanitizer-1.2.3.jar
 COPY --from=fetcher /artifacts/owasp-java-html-sanitizer-20260101.1.jar      /tmp/owasp-java-html-sanitizer-20260101.1.jar
@@ -415,7 +418,7 @@ RUN set -eux; \
     install -m 400 -o unifi-video -g unifi-video /tmp/commons-io-2.18.0.jar                               ./commons-io-2.18.0.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/commons-beanutils-1.11.0.jar                        ./commons-beanutils-1.11.0.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/jackson-databind-2.12.7.2.jar                       ./jackson-databind-2.12.7.2.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/jackson-core-2.15.4.jar                             ./jackson-core-2.15.4.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/jackson-core-2.19.0.jar                             ./jackson-core-2.19.0.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/jackson-annotations-2.12.7.jar                      ./jackson-annotations-2.12.7.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/json-sanitizer-1.2.3.jar                            ./json-sanitizer-1.2.3.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/owasp-java-html-sanitizer-20260101.1.jar            ./owasp-java-html-sanitizer-20260101.1.jar; \

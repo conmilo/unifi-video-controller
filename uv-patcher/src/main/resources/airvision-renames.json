@@ -73,7 +73,7 @@
     "commons-collections.jar":             "commons-collections-3.2.2.jar",
     "commons-io-2.6.jar":                  "commons-io-2.18.0.jar",
     "jackson-annotations-2.7.2.jar":       "jackson-annotations-2.12.7.jar",
-    "jackson-core-2.7.4.jar":              "jackson-core-2.15.4.jar",
+    "jackson-core-2.7.4.jar":              "jackson-core-2.19.0.jar",
     "jackson-databind-2.7.4.jar":          "jackson-databind-2.12.7.2.jar",
     "jettison-1.1.jar":                    "jettison-1.5.4.jar",
     "json-sanitizer-1.1.jar":              "json-sanitizer-1.2.3.jar",
