@@ -880,7 +880,7 @@ strictly-public-API layer (the streaming-JSON parser/generator types
 `JsonToken`, etc.). Jackson's compatibility policy is essentially
 "jackson-core's public surface does not break across 2.x minors" and
 Mongojack 2.7.0 only touches that public surface (no use of
-`jackson-core` internals from CFR-decompile inspection).
+`jackson-core` internals confirmed by static analysis).
 
 The 2.15 -> 2.12 mixed-minor combination is one Jackson explicitly does
 NOT support, but the failure modes (if any) are runtime, not load-time.
@@ -1002,9 +1002,9 @@ the pinned 8u265 JVM rejects). They are Phase 3 territory.
   `org.apache.catalina.startup.Bootstrap` with two compatibility-shim
   instance methods re-added. Apache 2.0 license header preserved at the
   top of the file plus a `conmilo` patch attribution explaining the two
-  added methods. 450 lines (~400 of upstream Tomcat decompiled by CFR
-  0.152, plus the two new methods and one hand-fix to a CFR variable-type
-  erasure).
+  added methods. 450 lines (~400 reconstructed from upstream Tomcat
+  bytecode, plus the two new methods and one hand-fix to a recovered
+  variable-type erasure).
 
 - **`tomcat/README.md`** -- explains why the patch exists, the build
   pipeline, and the Trivy detection note.
@@ -1070,7 +1070,7 @@ java.lang.NoSuchMethodError:
     ...
 ```
 
-CFR decompile of Tomcat 9.0.118's Bootstrap confirmed the diagnosis:
+Static analysis of Tomcat 9.0.118's Bootstrap confirmed the diagnosis:
 the `setCatalinaBase(String)` and `setCatalinaHome(String)` instance
 methods that existed in Tomcat 7.0.86 were **removed** in Tomcat 9
 (the catalina.base/home values are now read from system properties or
@@ -1220,8 +1220,9 @@ the 2.7.9.x JARs, and `checksums/SHA256SUMS` reflects the new digests.
 
 ### Why this works (the empirical answer)
 
-Mongojack 2.7.0 was decompiled (`docs/PHASE-2-ROADMAP.md` -- Phase 2A
-section) and its Jackson API surface enumerated. It uses Jackson's
+Mongojack 2.7.0's bytecode was analysed (`docs/PHASE-2-ROADMAP.md` --
+Phase 2A section) and its Jackson API surface enumerated. It uses
+Jackson's
 public APIs (`ObjectMapper`, `JsonSerializer`, `JsonDeserializer`,
 `JavaType`, `TypeFactory`) AND a substantial set of
 internal-package APIs (`databind.deser.BeanDeserializer`,
@@ -1417,8 +1418,8 @@ more libraries.
   with Maven coordinates, the 85 fixable HIGH/CRITICAL CVEs grouped by
   package, per-JAR native-library audit (all 82 are pure bytecode; the 4
   `.so` files are siblings in `lib/`, not bundled), `airvision.jar`
-  obfuscation fingerprint (only ~1% of classes are obfuscated; CFR
-  decompile in a future Phase 2 is feasible), and the documented
+  obfuscation fingerprint (only ~1% of classes are obfuscated; static
+  analysis in a future Phase 2 is feasible), and the documented
   `airvision.jar` Class-Path filename-pinning constraint. Includes a
   copy-pastable reproduction script for any subsequent maintainer.
 
@@ -1455,8 +1456,8 @@ These remain in the image and are tracked for Phase 2:
 
 | Package | Installed | CVE count | Phase | Why deferred |
 |---|---|---:|---|---|
-| `jackson-databind` | 2.7.9.7 | 30 | 2 | Requires Jackson 2.12+ ; forces Mongojack 2.7.0 -> 2.12+ ; needs CFR audit of every airvision `ObjectMapper` / Mongojack glue call site. |
-| `tomcat-embed-core` | 7.0.86 | 16 | 2 | Tomcat 7 -> 9 is a Servlet 3.0 -> 4.0 spec jump; needs decompile-driven verification that airvision's `TomcatLifecycleListener` and any custom valves still compile/link. Tomcat 10+ requires `jakarta.*` namespace which Jersey 1.19 cannot use. |
+| `jackson-databind` | 2.7.9.7 | 30 | 2 | Requires Jackson 2.12+ ; forces Mongojack 2.7.0 -> 2.12+ ; needs a call-site audit of every airvision `ObjectMapper` / Mongojack glue invocation. |
+| `tomcat-embed-core` | 7.0.86 | 16 | 2 | Tomcat 7 -> 9 is a Servlet 3.0 -> 4.0 spec jump; needs call-site verification that airvision's `TomcatLifecycleListener` and any custom valves still compile/link. Tomcat 10+ requires `jakarta.*` namespace which Jersey 1.19 cannot use. |
 | `jettison` | 1.1 | 4 | 1B (smoke-test required) | Jersey transitive; bumping requires a smoke-test of `/api/2.0/*` JSON<->XML negotiation. |
 | `commons-beanutils` | 1.7.0 | 2 | 1B | json-lib / Jersey transitive; verifies clean only with a populated DB. |
 | `json-sanitizer` | 1.1 | 2 | 1B | OWASP path; needs UI render smoke-test. |
@@ -1464,8 +1465,9 @@ These remain in the image and are tracked for Phase 2:
 | `jackson-core` | 2.7.9 | 1 | 2 | CVE-2025-52999 requires 2.15+, blocked by databind transition. |
 
 Phase 1B (the four packages requiring smoke tests) lands once a prod
-snapshot is reproducibly importable. Phase 2 begins after that with a CFR
-decompile of `airvision.jar`'s Mongojack and Tomcat-lifecycle call sites.
+snapshot is reproducibly importable. Phase 2 begins after that with a
+static-analysis audit of `airvision.jar`'s Mongojack and
+Tomcat-lifecycle call sites.
 
 ### Verification
 

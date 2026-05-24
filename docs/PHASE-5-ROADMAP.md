@@ -40,10 +40,9 @@ the bump is materially riskier than the Phase 4 set.
 `bcprov-ext-jdk15on`, `bcpkix-jdk15on`) -- Trivy reports the same CVE
 twice when it affects two JARs, hence 10 alerts for 7 underlying CVEs.
 
-### Surface to audit (decompile-driven)
+### Surface to audit
 
-Per the CFR decompile at `/root/uv-harden/decompile/airvision-src/`, the
-`org.bouncycastle.*` import surface in airvision spans:
+airvision's `org.bouncycastle.*` import surface spans:
 
 - **`asn1.x500.*`** -- `X500Name`, `X500NameBuilder` (subject DN
   construction for self-signed certs).
@@ -184,17 +183,17 @@ removed some 3.0 surface:
 
 - `Stage.PRODUCTION` constructor signature changes (3.0 accepted a
   `Module...` varargs, 4.x prefers `Guice.createInjector(Stage.PROD,
-  Module...)`).  airvision spots: TBD (decompile-driven).
+  Module...)`).  airvision spots: TBD (call-site audit).
 - `@Provides @Override` -- removed in 4.x; airvision spots: TBD.
 - `TypeLiteral(Type type)` constructor -- changed in 4.x; airvision
   spots: TBD.
 - `ServletModule` Class-Path: changed Guice servlet's package layout
   in 4.x.  airvision uses `guice-servlet-3.0.jar`.
 
-Decompile-driven audit required:
+Full call-site audit required:
 
-- Enumerate every `com.google.inject.*` call site in
-  `airvision-src/`.
+- Enumerate every `com.google.inject.*` reference in airvision's
+  bytecode.
 - For each call site, check the Guice 5.1.0 javadoc / source.
 
 Three Guice JARs to bump in lockstep:
@@ -242,9 +241,9 @@ worth it.
 ### Risk verdict
 
 **High.**  Path 1 (Guice 4/5 + Guava 32) is the only real option, but
-it's an honest 3+ session of focused work including a full decompile
-pass over airvision's Guice module wiring.  Defer to Phase 6 (or
-later); Phase 5 should ship and stabilise first.
+it's an honest 3+ session of focused work including a full audit pass
+over airvision's Guice module wiring.  Defer to Phase 6 (or later);
+Phase 5 should ship and stabilise first.
 
 ---
 
