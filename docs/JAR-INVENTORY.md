@@ -9,7 +9,7 @@
 
 - **Trivy 0.70.0** — CVE scan, filter `--severity HIGH,CRITICAL --ignore-unfixed --vuln-type os,library`
 - **`unzip -p` + manifest/`pom.properties` parsing** — per-JAR Maven coordinates and bundled-native audit
-- **CFR 0.152** — reserved for Phase 2 decompile; not run yet
+- **Static bytecode analysis** — reserved for Phase 2 call-site audit; not run yet
 
 Raw scan artifacts live in `/root/uv-harden/work/` on the maintainer's hardening
 workstation (`trivy-out/v3.10.13-7.{json,txt}`, `jar-coordinates.txt`,
@@ -40,10 +40,10 @@ work:
 |---|---|
 | `<5` | Simplify — skip Phase 2/3 entirely |
 | `5–9` | Standard Phase 1 |
-| `≥10` | Phase 2 (decompile + audit) warranted |
+| `≥10` | Phase 2 (call-site audit) warranted |
 
 **Result: 81 fixable CVEs → full plan in scope.** Proceed to Phase 1 (safe
-bumps + log4j cleanup), then Phase 2 (decompile-driven verification before
+bumps + log4j cleanup), then Phase 2 (call-site verification before
 bumping shared-API libraries).
 
 ## Vulnerable packages — detail
@@ -83,7 +83,7 @@ CVE-2020-9548.
 
 The remaining **30 CVEs require Jackson 2.12.x or newer**, which forces a
 **Mongojack 2.7.0 → 2.12+** bump and a Jersey/Servlet stack alignment. That
-work is **Phase 2** (decompile-driven audit of every airvision call site that
+work is **Phase 2** (call-site audit of every airvision reference that
 touches Mongojack's `ObjectMapper`/`MongoCollection` glue, plus the Jersey
 1.19 JAX-RS provider).
 
@@ -105,8 +105,8 @@ Servlet API namespace `javax.servlet`)
 scope** without a major source-level refactor (jersey 1.19 uses `javax.*`).
 
 **Recommended action**: **Phase 2 audit required** before any bump. Tomcat 7
-to 9 is a Servlet 3.0 → 4.0 spec jump; needs decompile-driven verification
-that airvision's lifecycle listener and any custom valves still compile/link.
+to 9 is a Servlet 3.0 → 4.0 spec jump; needs call-site verification that
+airvision's lifecycle listener and any custom valves still compile/link.
 Phase 1 candidate: just **document the exposure**; do *not* attempt the bump
 without a smoke-test environment.
 
@@ -356,7 +356,7 @@ These do not carry a Maven `pom.properties` and their manifests omit
 
 | JAR | Notes |
 |---|---|
-| `Java-WebSocket-1.3.0-45-gf96ce50.jar` | git-describe naming → UBNT-patched fork of TooTallNate/Java-WebSocket 1.3.0 + 45 commits past tag `f96ce50`. **Phase 2 candidate**: decompile and compare against upstream 1.3.0…1.3.x to bound the patch surface. |
+| `Java-WebSocket-1.3.0-45-gf96ce50.jar` | git-describe naming → UBNT-patched fork of TooTallNate/Java-WebSocket 1.3.0 + 45 commits past tag `f96ce50`. **Phase 2 candidate**: compare against upstream 1.3.0…1.3.x to bound the patch surface. |
 | `aopalliance.jar` | Single-class, single-version since 2004. Safe. |
 | `av2-migrator.jar` | Internal: AV1→AV2 storage migration tool. Not on the request-handling path. |
 | `avutils.1.0.38.jar` | UBNT FFmpeg JNI — paired with `libubnt_avutils_jni.so`. Frozen. |
@@ -372,7 +372,7 @@ These do not carry a Maven `pom.properties` and their manifests omit
 
 | Subtree | Class count | % | Status |
 |---|---:|---:|---|
-| `com/ubnt/airvision/` | 811 | 82% | original symbols, decompiles cleanly |
+| `com/ubnt/airvision/` | 811 | 82% | original symbols, fully analysable |
 | `com/ubnt/common/` | 141 | 14% | original symbols |
 | `com/ubnt/av/` | 30 | 3% | original symbols |
 | `com/ubnt/A/super/oOOO/` | 10 | 1% | **obfuscated** (class names: `Object`, `String`, `super`, `F`, `OoOO`, `o0OO` — reserved-word / mixed-case style consistent with Allatori or Zelix KlassMaster) |
@@ -388,7 +388,7 @@ inspect resolved method refs).
 
 **Phase 2 implication**: the obfuscated bundle is small enough (~10 classes,
 likely a licensing/registration shim or a vendored crypto library) that a
-focused decompile and review fits inside Phase 2's standard time budget.
+focused static-analysis review fits inside Phase 2's standard time budget.
 
 ## Full inventory (all 82 JARs)
 

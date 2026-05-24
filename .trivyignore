@@ -1,51 +1,198 @@
-# Trivy suppression list -- format: one CVE per line, optional comment.
+# Trivy suppression list -- libssl1.1 backport status.
 #
-# Phase 3 (v3.10.13-13) reduced this file to only the libssl1.1 backport
-# suppressions.  The Phase 1 log4j filename-mismatch block and the Phase 2B
-# tomcat-embed-core SHA1-mismatch block were both retired:
+# Format: one CVE per line, optional comment block above.
 #
-#   - log4j filenames are now normalised by the Phase 3 lib/ rename (e.g.
-#     log4j-core-2.17.2.jar holds 2.17.2 bytes; airvision's Manifest
-#     Class-Path is rewritten to match via uv-patcher).  Trivy's filename-
-#     derived fingerprint and content-derived fingerprint agree -- no more
-#     false-positive 2.1 reports.
+# Phase 4 (v3.10.13-16) expanded this file from the original 6 entries (Phase 1)
+# to 38 entries via the Ubuntu CVE JSON API audit at:
+#   https://ubuntu.com/security/cves/<CVE_ID>.json (focal/openssl status)
 #
-#   - tomcat-embed-core-9.0.118.jar is now shipped pristine from Maven
-#     Central.  The Tomcat 9 Bootstrap instance-method shim is applied by
-#     uv-patcher at container start (in the writable layer), so the image
-#     layer's JAR has the original 9.0.118 SHA1 and Trivy matches the
-#     trivy-java-db entry cleanly.
+# Every entry below is one of:
+#   - not-affected = vulnerable code never landed in focal's libssl1.1 (1.1.1x line)
+#   - released     = Canonical backported the fix into the focal-security public
+#                    pool at a version <= our 1.1.1f-1ubuntu2.24 pin.
 #
-# Entries below are libssl1.1 backports where Canonical fixed the CVE in
-# the focal-security pool (current pin: 1.1.1f-1ubuntu2.24) but Trivy's
-# database matches the upstream OpenSSL version string and doesn't see
-# the backport.  Each Ubuntu Security tracker entry confirms the focal
-# patch level we ship has the fix.
+# Why this is necessary: Trivy reports CVE fixes against the upstream OpenSSL
+# version string (e.g. "fixed in 3.0.13").  Canonical backports those fixes
+# into focal's 1.1.1f-1ubuntu2.X without changing the version prefix.  Trivy
+# doesn't see the backport and flags the CVE; the entries below close that
+# false-positive loop with a per-CVE audit reference.
 #
-# When the libssl1.1 pin is eventually bumped (Dependabot or a manual
-# version refresh), re-validate each entry against Ubuntu's tracker.
-# Remove anything no longer applicable.
+# Why these entries are LIMITED to libssl1.1: it's the only package in the
+# runtime image where we install a manual .deb (from the focal-security pool
+# for MongoDB 4.4 mongod compatibility -- see Dockerfile libssl1.1 install
+# block).  Everything else flows through apt's noble pool which Trivy sees
+# directly.
+#
+# What's NOT suppressed (real residual exposure in code scanning):
+#   - 12 libssl1.1 CVEs where Canonical only released the fix via Ubuntu Pro
+#     ESM (the "+esmN" suffix in the focal description -- e.g.
+#     "1.1.1f-1ubuntu2.24+esm2").  ESM is paywalled; the public 1.1.1f-1ubuntu2.24
+#     deb we install does NOT include the fix.  These CVEs remain visible in
+#     code scanning as a genuine tracking signal -- when this image moves off
+#     MongoDB 4.4 (won't happen until either an AVX-free MongoDB 5.0+ exists
+#     OR the project drops Apollo Lake support), libssl1.1 leaves with it.
+#   - libssl1.1 CVEs marked "needed" or "pending" in the focal/openssl tracker
+#     (Canonical agrees a fix is needed but hasn't shipped one yet).
+#
+# When the libssl1.1 pin is eventually bumped (Dependabot or a manual version
+# refresh past 1.1.1f-1ubuntu2.24), re-validate every entry against Ubuntu's
+# tracker.  Remove anything no longer applicable.  The Phase 4 audit script
+# lives in CHANGELOG v3.10.13-16's Verification section if you need to re-run
+# it.
 
-# https://ubuntu.com/security/CVE-2021-3449
-# fixed in focal 1.1.1f-1ubuntu2.4 (we ship 1.1.1f-1ubuntu2.24)
-CVE-2021-3449
+# ---- not-affected (vulnerable code not in focal libssl1.1) (16) ----
 
-# https://ubuntu.com/security/CVE-2021-3711
-# fixed in focal 1.1.1f-1ubuntu2.8
-CVE-2021-3711
+# https://ubuntu.com/security/CVE-2022-1343
+# focal/openssl: not-affected -- v3.x only
+CVE-2022-1343
 
-# https://ubuntu.com/security/CVE-2022-0778
-# fixed in focal 1.1.1f-1ubuntu2.12
-CVE-2022-0778
+# https://ubuntu.com/security/CVE-2022-1434
+# focal/openssl: not-affected -- v3.x only
+CVE-2022-1434
+
+# https://ubuntu.com/security/CVE-2022-1473
+# focal/openssl: not-affected -- 1.1.1f-1ubuntu2.12
+CVE-2022-1473
+
+# https://ubuntu.com/security/CVE-2022-3358
+# focal/openssl: not-affected -- code not present
+CVE-2022-3358
 
 # https://ubuntu.com/security/CVE-2022-3602
-# fixed in focal 1.1.1f-1ubuntu2.17
+# focal/openssl: not-affected -- 1.1.1f-1ubuntu2.16
 CVE-2022-3602
 
 # https://ubuntu.com/security/CVE-2022-3786
-# fixed in focal 1.1.1f-1ubuntu2.17
+# focal/openssl: not-affected -- 1.1.1f-1ubuntu2.16
 CVE-2022-3786
 
+# https://ubuntu.com/security/CVE-2022-3996
+# focal/openssl: not-affected -- code not present
+CVE-2022-3996
+
+# https://ubuntu.com/security/CVE-2023-1255
+# focal/openssl: not-affected -- 3.x only
+CVE-2023-1255
+
+# https://ubuntu.com/security/CVE-2023-5363
+# focal/openssl: not-affected -- 3.x only
+CVE-2023-5363
+
+# https://ubuntu.com/security/CVE-2023-6129
+# focal/openssl: not-affected -- 3.x only
+CVE-2023-6129
+
+# https://ubuntu.com/security/CVE-2023-6237
+# focal/openssl: not-affected -- 3.x only
+CVE-2023-6237
+
+# https://ubuntu.com/security/CVE-2024-4603
+# focal/openssl: not-affected -- 3.x only
+CVE-2024-4603
+
+# https://ubuntu.com/security/CVE-2024-6119
+# focal/openssl: not-affected -- 3.x only
+CVE-2024-6119
+
+# https://ubuntu.com/security/CVE-2025-15467
+# focal/openssl: not-affected -- 3.0.x+ only
+CVE-2025-15467
+
+# https://ubuntu.com/security/CVE-2026-31789
+# focal/openssl: not-affected -- 3.0+ only
+CVE-2026-31789
+
+# https://ubuntu.com/security/CVE-2026-31790
+# focal/openssl: not-affected -- 3.0+ only
+CVE-2026-31790
+
+# ---- released to focal-security public pool (already in our pin) (22) ----
+
+# https://ubuntu.com/security/CVE-2021-23840
+# focal/openssl: released -- 1.1.1f-1ubuntu2.2
+CVE-2021-23840
+
+# https://ubuntu.com/security/CVE-2021-3449
+# focal/openssl: released -- 1.1.1f-1ubuntu2.3
+CVE-2021-3449
+
+# https://ubuntu.com/security/CVE-2021-3711
+# focal/openssl: released -- 1.1.1f-1ubuntu2.8
+CVE-2021-3711
+
+# https://ubuntu.com/security/CVE-2021-3712
+# focal/openssl: released -- 1.1.1f-1ubuntu2.8
+CVE-2021-3712
+
+# https://ubuntu.com/security/CVE-2022-0778
+# focal/openssl: released -- 1.1.1f-1ubuntu2.12
+CVE-2022-0778
+
+# https://ubuntu.com/security/CVE-2022-1292
+# focal/openssl: released -- 1.1.1f-1ubuntu2.13
+CVE-2022-1292
+
+# https://ubuntu.com/security/CVE-2022-2097
+# focal/openssl: released -- 1.1.1f-1ubuntu2.16
+CVE-2022-2097
+
+# https://ubuntu.com/security/CVE-2022-4304
+# focal/openssl: released -- 1.1.1f-1ubuntu2.17
+CVE-2022-4304
+
+# https://ubuntu.com/security/CVE-2022-4450
+# focal/openssl: released -- 1.1.1f-1ubuntu2.17
+CVE-2022-4450
+
+# https://ubuntu.com/security/CVE-2023-0215
+# focal/openssl: released -- 1.1.1f-1ubuntu2.17
+CVE-2023-0215
+
 # https://ubuntu.com/security/CVE-2023-0286
-# fixed in focal 1.1.1f-1ubuntu2.19
+# focal/openssl: released -- 1.1.1f-1ubuntu2.17
 CVE-2023-0286
+
+# https://ubuntu.com/security/CVE-2023-0464
+# focal/openssl: released -- 1.1.1f-1ubuntu2.18
+CVE-2023-0464
+
+# https://ubuntu.com/security/CVE-2023-0465
+# focal/openssl: released -- 1.1.1f-1ubuntu2.18
+CVE-2023-0465
+
+# https://ubuntu.com/security/CVE-2023-0466
+# focal/openssl: released -- 1.1.1f-1ubuntu2.18
+CVE-2023-0466
+
+# https://ubuntu.com/security/CVE-2023-2650
+# focal/openssl: released -- 1.1.1f-1ubuntu2.19
+CVE-2023-2650
+
+# https://ubuntu.com/security/CVE-2023-5678
+# focal/openssl: released -- 1.1.1f-1ubuntu2.21
+CVE-2023-5678
+
+# https://ubuntu.com/security/CVE-2024-0727
+# focal/openssl: released -- 1.1.1f-1ubuntu2.21
+CVE-2024-0727
+
+# https://ubuntu.com/security/CVE-2024-13176
+# focal/openssl: released -- 1.1.1f-1ubuntu2.24
+CVE-2024-13176
+
+# https://ubuntu.com/security/CVE-2024-2511
+# focal/openssl: released -- 1.1.1f-1ubuntu2.23
+CVE-2024-2511
+
+# https://ubuntu.com/security/CVE-2024-4741
+# focal/openssl: released -- 1.1.1f-1ubuntu2.23
+CVE-2024-4741
+
+# https://ubuntu.com/security/CVE-2024-5535
+# focal/openssl: released -- 1.1.1f-1ubuntu2.23
+CVE-2024-5535
+
+# https://ubuntu.com/security/CVE-2024-9143
+# focal/openssl: released -- 1.1.1f-1ubuntu2.24
+CVE-2024-9143
+

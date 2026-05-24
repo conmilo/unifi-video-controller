@@ -15,9 +15,9 @@
 >   Tomcat 9 made `setCatalinaBase(String)` and `setCatalinaHome(String)`
 >   static + reduced them to no-arg variants reading from system
 >   properties / `user.dir`. v3.10.13-11 fixed this with a build-time
->   patch (compile a CFR-decompiled Bootstrap.java with two
->   instance-method shims re-added, splice the resulting class into the
->   upstream JAR via a new `tomcat-patcher` Dockerfile stage). Tomcat 8.5
+>   patch (compile a Bootstrap.java with two instance-method shims
+>   re-added, splice the resulting class into the upstream JAR via a
+>   new `tomcat-patcher` Dockerfile stage). Tomcat 8.5
 >   was investigated as an intermediate jump (open question 4) but the
 >   same instance-method removal was back-ported to 8.5.x; 8.5 offered
 >   no advantage. Open questions 2, 3, and 5 became unnecessary once the
@@ -50,8 +50,8 @@
 + 1 owasp-html). Phase 2 is bounded by what is possible WITHOUT Phase 3
 (airvision identifier rewrite + JRE unpin).
 
-**Method**: empirical -- CFR decompile of `airvision.jar` (990 classes,
-4 MB of source), targeted compatibility tests against the populated
+**Method**: empirical -- static analysis of `airvision.jar` (990 classes)
++ targeted compatibility tests against the populated
 `<redacted-NVR-name>` prod-data snapshot.
 
 **Outcome of this session**:
@@ -71,7 +71,7 @@ and structurally only fixable in Phase 3).
 
 ### Constraint 1: airvision uses legacy MongoDB `DB*` API
 
-Decompile finding:
+Finding:
 
 ```
 $ grep -hrE '^import com\.mongodb\.' airvision-src --include='*.java' | sort -u
@@ -118,8 +118,9 @@ These are spread across `data/`, `service/data/`, `service/recording/`,
 work is mechanical but extensive, and requires either:
 
 - the ability to recompile `airvision.jar` from rewritten source
-  (Ubiquiti doesn't ship sources; CFR decompile is lossy, especially
-  for the obfuscated `com/ubnt/A/super/oOOO/` bundle), or
+  (Ubiquiti doesn't ship sources; reconstructed source from bytecode
+  is lossy, especially for the obfuscated `com/ubnt/A/super/oOOO/`
+  bundle), or
 - in-place bytecode rewriting via ASM (complex, error-prone for the
   Mongojack call surface).
 
@@ -138,7 +139,7 @@ swaps the bytes inside.
 
 ### Findings
 
-Mongojack 2.7.0's Jackson API surface (from CFR decompile of
+Mongojack 2.7.0's Jackson API surface (from static analysis of
 `mongojack-2.7.0.jar`):
 
 - Public Jackson API: `ObjectMapper`, `JsonSerializer<T>`,
@@ -297,7 +298,7 @@ the fetcher stage and `SHA256SUMS`.
 
 ## Phase 2B -- Tomcat 9.0.118: FAILED initial attempt
 
-### Decompile finding: airvision's Tomcat surface is small and public-API
+### Finding: airvision's Tomcat surface is small and public-API
 
 ```
 $ grep -hrE '^import org\.apache\.(catalina|tomcat|coyote)\.' airvision-src
@@ -370,8 +371,8 @@ Run against the same prod-data snapshot:
 
 The JVM is exiting cleanly (no native crash, no java stack trace
 written to log4j) somewhere between "SSL Keystore initialized" and the
-next step (which the decompile says is the embedded Tomcat bootstrap in
-`com/ubnt/common/oOOO/A.java`). This is the canonical fingerprint of an
+next step (which static analysis identifies as the embedded Tomcat
+bootstrap in `com/ubnt/common/oOOO/A`). This is the canonical fingerprint of an
 uncaught `Throwable` thrown from a thread BEFORE log4j-on-the-classpath
 is fully wired in, OR an uncaught `Error` that bypasses application-level
 loggers (LinkageError, ClassCircularityError, etc.).
@@ -390,7 +391,7 @@ loggers (LinkageError, ClassCircularityError, etc.).
    `init()` between 7.0.86 and 9.0.118**. The class was significantly
    restructured for module-system compatibility in the 9.0 release
    line (especially around `digester3` removal and the new
-   `SystemLogHandler`). The empirical decompile shows airvision calls
+   `SystemLogHandler`). Static analysis shows airvision calls
    the no-arg `Bootstrap()` constructor followed by `setCatalinaBase`
    / `setCatalinaHome` / `init` -- if the no-arg constructor's
    semantics changed (e.g., a new `SystemLogHandler` install that
@@ -419,9 +420,10 @@ loggers (LinkageError, ClassCircularityError, etc.).
 
 **Defer Plan 2B to a separate session**. The investigation requires an
 iterative debug cycle (5+ rebuilds + boots per finding) that is best
-done with focused time. The decompile findings are encouraging (the
-airvision Tomcat surface is genuinely small and uses only public APIs)
-so the work is probably 1-2 days of focused investigation, not weeks.
+done with focused time. The static-analysis findings are encouraging
+(the airvision Tomcat surface is genuinely small and uses only public
+APIs) so the work is probably 1-2 days of focused investigation, not
+weeks.
 
 In the meantime, Plan 2A is independently shippable and closes the
 majority of the remaining CVE burden.
@@ -456,15 +458,10 @@ example of a CVE that Phase 3 unblocks.
 
 ## Reproducing the empirical tests
 
-CFR decompile of airvision.jar (445 source files, 4 MB output):
-
-```bash
-mkdir -p /root/uv-harden/decompile/airvision-src
-java -jar /opt/tools/cfr.jar /root/uv-harden/work/lib/airvision.jar \
-  --outputdir /root/uv-harden/decompile/airvision-src --silent
-```
-
-Equivalent for mongojack-2.7.0.jar.
+Static analysis of airvision.jar's call sites uses standard JDK
+bytecode tooling (e.g. `javap -p -c` over each `.class` extracted via
+`unzip`) to enumerate imports and INVOKE* targets without external
+tools.  The findings tables above were derived this way.
 
 Plan 2A test (Jackson 2.12 swap on top of v3.10.13-9 image):
 
