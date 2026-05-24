@@ -39,7 +39,7 @@ jobs:
           echo "name=${ref}" >> "$GITHUB_OUTPUT"
           echo "Will release: ${ref}"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.tag.outputs.name }}
           fetch-depth: 0
