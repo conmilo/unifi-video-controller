@@ -78,7 +78,7 @@ RUN set -eux; \
 # small Java artefact that the runtime stage consumes via COPY --from=.
 # See uv-patcher/README.md for the design.
 # ---------------------------------------------------------------------------
-FROM eclipse-temurin:21-jdk AS patcher-builder
+FROM eclipse-temurin:25-jdk AS patcher-builder
 
 # hadolint ignore=DL3008
 RUN apt-get update && \
