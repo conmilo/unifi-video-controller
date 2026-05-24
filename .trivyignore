@@ -1,0 +1,51 @@
+# Trivy suppression list -- format: one CVE per line, optional comment.
+#
+# Phase 3 (v3.10.13-13) reduced this file to only the libssl1.1 backport
+# suppressions.  The Phase 1 log4j filename-mismatch block and the Phase 2B
+# tomcat-embed-core SHA1-mismatch block were both retired:
+#
+#   - log4j filenames are now normalised by the Phase 3 lib/ rename (e.g.
+#     log4j-core-2.17.2.jar holds 2.17.2 bytes; airvision's Manifest
+#     Class-Path is rewritten to match via uv-patcher).  Trivy's filename-
+#     derived fingerprint and content-derived fingerprint agree -- no more
+#     false-positive 2.1 reports.
+#
+#   - tomcat-embed-core-9.0.118.jar is now shipped pristine from Maven
+#     Central.  The Tomcat 9 Bootstrap instance-method shim is applied by
+#     uv-patcher at container start (in the writable layer), so the image
+#     layer's JAR has the original 9.0.118 SHA1 and Trivy matches the
+#     trivy-java-db entry cleanly.
+#
+# Entries below are libssl1.1 backports where Canonical fixed the CVE in
+# the focal-security pool (current pin: 1.1.1f-1ubuntu2.24) but Trivy's
+# database matches the upstream OpenSSL version string and doesn't see
+# the backport.  Each Ubuntu Security tracker entry confirms the focal
+# patch level we ship has the fix.
+#
+# When the libssl1.1 pin is eventually bumped (Dependabot or a manual
+# version refresh), re-validate each entry against Ubuntu's tracker.
+# Remove anything no longer applicable.
+
+# https://ubuntu.com/security/CVE-2021-3449
+# fixed in focal 1.1.1f-1ubuntu2.4 (we ship 1.1.1f-1ubuntu2.24)
+CVE-2021-3449
+
+# https://ubuntu.com/security/CVE-2021-3711
+# fixed in focal 1.1.1f-1ubuntu2.8
+CVE-2021-3711
+
+# https://ubuntu.com/security/CVE-2022-0778
+# fixed in focal 1.1.1f-1ubuntu2.12
+CVE-2022-0778
+
+# https://ubuntu.com/security/CVE-2022-3602
+# fixed in focal 1.1.1f-1ubuntu2.17
+CVE-2022-3602
+
+# https://ubuntu.com/security/CVE-2022-3786
+# fixed in focal 1.1.1f-1ubuntu2.17
+CVE-2022-3786
+
+# https://ubuntu.com/security/CVE-2023-0286
+# fixed in focal 1.1.1f-1ubuntu2.19
+CVE-2023-0286

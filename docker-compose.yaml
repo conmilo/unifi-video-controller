@@ -1,27 +1,85 @@
-version: '3'
+# docker-compose.yaml -- example deployment of the modernized UniFi Video
+# Controller image. Adjust volume host paths, timezone, and PUID/PGID for
+# your environment before running.
+#
+# Usage:
+#   docker compose up -d
+#
+# To build locally instead of pulling from GHCR, comment out the `image:`
+# line and uncomment `build: .`.
+
 services:
-  unifi-video-controller:
-    build: .
-    container_name: unifi-video-controller
-    ports:
-      - 1935:1935
-      - 6666:6666
-      - 7004:7004
-      - 7080:7080
-      - 7442:7442
-      - 7443:7443
-      - 7444:7444
-      - 7445:7445
-      - 7446:7446
-      - 7447:7447
-    volumes:
-      - ./run/data:/var/lib/unifi-video
-      - ./run/videos:/var/lib/unifi-video/videos
-    tmpfs:
-      - /var/cache/unifi-video
-    environment:
-      - TZ=America/Los_Angeles
-      - DEBUG=1
-      - CREATE_TMPFS=no
+  unifi-video:
+    image: ghcr.io/conmilo/unifi-video-controller:latest
+    # build: .
+    container_name: unifi-video
+    restart: unless-stopped
+
+    # Required so the JVM can resolve symlinks across bind-mounted volumes
+    # without the kernel returning EACCES (Synology DSM bind mounts).
     cap_add:
       - DAC_READ_SEARCH
+
+    ports:
+      # 1935/tcp   RTMP
+      - "1935:1935/tcp"
+      # 6666/tcp   Inbound camera streams
+      - "6666:6666/tcp"
+      # 7004/udp   UVC-Micro talkback (camera side)
+      - "7004:7004/udp"
+      # 7080/tcp   HTTP web UI
+      - "7080:7080/tcp"
+      # 7442/tcp   Camera management (NVR side)
+      - "7442:7442/tcp"
+      # 7443/tcp   HTTPS web UI + API
+      - "7443:7443/tcp"
+      # 7444/tcp   RTMPS
+      - "7444:7444/tcp"
+      # 7445/tcp   Video over HTTP
+      - "7445:7445/tcp"
+      # 7446/tcp   Video over HTTPS
+      - "7446:7446/tcp"
+      # 7447/tcp   RTSP
+      - "7447:7447/tcp"
+      # 10001/udp  Camera discovery (Inform)
+      - "10001:10001/udp"
+
+    volumes:
+      # Persistent state: MongoDB data, recordings index, controller config.
+      # Point this at a fast (SSD) volume if possible; the recordings dir
+      # below can live on slower bulk storage.
+      - ./run/data:/var/lib/unifi-video
+      # Optional override -- recordings dir. Comment out to keep them inside
+      # /var/lib/unifi-video alongside the DB.
+      - ./run/videos:/var/lib/unifi-video/videos
+
+    # tmpfs-backed scratch for export and HLS segments. Keeps SSD writes
+    # down. UniFi Video re-creates the directories under here on demand.
+    tmpfs:
+      - /var/cache/unifi-video
+
+    environment:
+      # Timezone for logs and the controller's scheduling logic.
+      TZ: America/Los_Angeles
+
+      # UID/GID the in-container unifi-video user should adopt. Match these
+      # to the owner of the host bind-mount dirs (DSM: typically PUID=1026
+      # for the first admin user, PGID=100 for the 'users' group).
+      PUID: "99"
+      PGID: "100"
+
+      # 002 = group-writable (775 dirs / 664 files); 022 = group-readonly.
+      UMASK: "002"
+
+      # Set to 1 to pass --debug to /usr/sbin/unifi-video.
+      DEBUG: "0"
+
+      # When 'yes', the patched unifi-video script mounts an internal tmpfs
+      # at /var/cache/unifi-video. We use the docker `tmpfs:` mount above
+      # instead, so leave this 'no'.
+      CREATE_TMPFS: "no"
+
+      # vuhuy fork compatibility knobs. Both default 'no'. Set 'yes' if you
+      # want the in-container script to manage tmpfs instead of docker.
+      USE_HOST_TMPFS: "no"
+      USE_UNIFI_TMPFS: "no"

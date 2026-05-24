@@ -8,6 +8,15 @@
  TMPFS_SIZE=15%
 
  UFV_VERBOSE=
+@@ -61,7 +62,7 @@
+ 	J=$1
+ 	V=$($J -version 2>&1 |awk -F\" '{print $2}')
+ 	case "$V" in
+-		1.8*) return 0
++		*) return 0
+ 		;;
+ 	esac
+ 	return 1
 @@ -276,7 +277,7 @@
  		 -Dcom.sun.management.jmxremote.authenticate=false \
  		 -Dcom.sun.management.jmxremote.port=${JVM_JMXREMOTE_PORT}"

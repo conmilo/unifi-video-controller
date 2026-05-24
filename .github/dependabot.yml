@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # Keep GitHub Actions versions current. Catches CVEs in the action
+  # ecosystem (docker/build-push-action, anchore/sbom-action, etc.).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+
+  # Keep the ubuntu:24.04 base image digest fresh. Dependabot rewrites the
+  # FROM <name>@sha256:<digest> reference in the Dockerfile when Docker Hub
+  # publishes a new 24.04 manifest (which happens with every security patch
+  # rollup, roughly monthly).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build"
+      include: scope
+    labels:
+      - dependencies
+      - docker

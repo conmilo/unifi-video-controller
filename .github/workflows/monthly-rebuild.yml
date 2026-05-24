@@ -1,0 +1,92 @@
+name: monthly-rebuild
+
+# Re-publishes the latest base release once a month with a date-stamped
+# suffix (e.g., v3.10.13-1.2026-06). Each monthly rebuild picks up:
+#   - newer ubuntu:24.04 base layers (if Docker Hub re-tagged 24.04 since)
+#   - newer libssl1.1 from the focal-security pool (Dependabot)
+#   - newer log4j patch releases (manual SHA bump)
+#   - newer MongoDB 4.4.x micro releases (manual SHA bump)
+#   - newer Canonical OpenJDK 21 LTS patch levels (apt-installed via
+#     openjdk-21-jre-headless; flows through Ubuntu noble's security
+#     pool automatically.  v3.10.13-13 retired the previous 8u265 pin
+#     AND moved off the Adoptium tarball to apt in Phase 3.1)
+# If none of the above changed, the rebuild is a near-identical image with
+# a fresh build timestamp -- still useful for documenting that we tested
+# successfully against current upstream state.
+#
+# NOTE: a JRE *major* bump (e.g. OpenJDK 21 -> 25) is NOT taken by the
+# monthly rebuild -- those need a deliberate code change because the
+# uv-patcher tool's ASM-based bytecode rewrite has to stay compatible with
+# the target class-file format (currently ASM 9.7, which supports up to
+# class file v65 / Java 21).  Within the 21.x LTS line, point releases are
+# safe to take automatically.
+
+on:
+  schedule:
+    # First of every month at 06:00 UTC (well clear of build.yml's weekly).
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write    # for creating + pushing the new tag
+  actions: write     # for invoking release.yml via gh workflow run
+
+jobs:
+  tag-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: compute new tag
+        id: tag
+        run: |
+          # Latest base tag matches v<semver>-<N> (no date suffix).
+          base=$(git tag --sort=-v:refname \
+                 | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$' \
+                 | head -1)
+          if [[ -z "${base}" ]]; then
+            echo "::error::No base tag (vX.Y.Z-N) found. Tag at least one base release before enabling the monthly rebuild." >&2
+            exit 1
+          fi
+          stamp=$(date -u +%Y-%m)
+          new="${base}.${stamp}"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          echo "name=${new}"  >> "$GITHUB_OUTPUT"
+          echo "Base tag:        ${base}"
+          echo "Proposed tag:    ${new}"
+
+      - name: skip if tag already exists
+        id: exists
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.tag.outputs.name }}" >/dev/null; then
+            echo "result=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "result=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.exists.outputs.result == 'true'
+        run: |
+          echo "Tag ${{ steps.tag.outputs.name }} already exists; skipping monthly rebuild."
+
+      - if: steps.exists.outputs.result == 'false'
+        name: create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.tag.outputs.name }}" \
+                  "${{ steps.tag.outputs.base }}" \
+                  -m "Monthly auto-rebuild for $(date -u +%Y-%m). Rebuilt from ${{ steps.tag.outputs.base }} against current upstream base layers and pinned artifacts."
+          git push origin "${{ steps.tag.outputs.name }}"
+
+      - if: steps.exists.outputs.result == 'false'
+        name: dispatch release.yml against new tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub's safety policy prevents GITHUB_TOKEN tag pushes from
+          # triggering downstream workflows, so we explicitly dispatch.
+          gh workflow run release.yml \
+              --ref "${{ steps.tag.outputs.name }}" \
+              -f tag="${{ steps.tag.outputs.name }}"

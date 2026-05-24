@@ -1,0 +1,40 @@
+# Anything not needed by the docker build context.
+# Keep this list aggressive -- the only files we need to copy into the
+# image are the Dockerfile, the two shell scripts, the equivs control
+# file, the unifi-video.patch, and the checksums dir.
+
+# VCS
+.git
+.gitignore
+.gitattributes
+.github/
+
+# Documentation -- not needed at build time
+*.md
+LICENSE
+
+# Compose -- used at runtime only, never during image build
+docker-compose.yaml
+docker-compose.yml
+
+# Editor / OS detritus
+.vscode/
+.idea/
+.windsurf/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Project-local runtime state (mount points, snapshots)
+run/
+data/
+videos/
+*.log
+*.tar
+*.tar.gz
+*.tar.zst
+
+# Lint configs (consumed by CI, not by the image build)
+.hadolint.yaml

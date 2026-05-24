@@ -1,0 +1,34 @@
+# hadolint configuration -- see https://github.com/hadolint/hadolint
+#
+# We treat warnings as failures (set in build.yml's failure-threshold).
+# A few rules are explicitly disabled where they don't fit this project:
+#
+#   DL3003  Use WORKDIR to switch directory. We intentionally `cd /tmp` in
+#           a couple of RUN blocks where equivs-build / tar must produce
+#           output in the CWD. The directory change is scoped to the same
+#           RUN, which is exactly the case where DL3003 over-warns.
+#   DL3007  Pin image with tag. We pin by digest (stronger). Hadolint
+#           doesn't recognise @sha256: as a valid pin in older versions.
+#   DL3008  apt-get install --no-install-recommends with version pins for
+#           every package. We pin the digest of the base image instead, so
+#           the package versions are reproducible per-digest.
+#   DL3009  apt-get clean / rm -rf /var/lib/apt/lists. We do this in the
+#           same RUN, but hadolint sometimes misfires when the cleanup is
+#           on a later line of the same RUN block.
+#   DL3015  --no-install-recommends. We already use it; this is a
+#           defensive disable in case future installs forget it (we'd
+#           rather a CI failure call it out via hadolint manually).
+#   SC1091  Sourcing a file that's not statically known to hadolint.
+#           Doesn't apply to our shell scripts (they're standalone).
+
+ignored:
+  - DL3003
+  - DL3007
+  - DL3008
+  - SC1091
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+
+failure-threshold: warning

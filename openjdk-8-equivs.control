@@ -1,0 +1,30 @@
+### Commented entries have reasonable defaults.
+### Uncomment to edit them.
+# Source: <source package name; defaults to package name>
+Section: java
+Priority: optional
+Standards-Version: 3.9.2
+
+Package: openjdk-8-jre-headless
+Version: 999:0-equivs-stub
+Maintainer: conmilo <noreply@github.com>
+Provides: java-runtime-headless, java8-runtime-headless, java2-runtime-headless, java-virtual-machine, java-runtime, java8-runtime, java2-runtime
+Architecture: amd64
+Description: openjdk-8-jre-headless equivs stub for UniFi Video .deb
+ Zero-file metapackage that satisfies the openjdk-8-jre-headless
+ dependency of the UniFi Video controller .deb without actually
+ installing any Java files. The "999:0-equivs-stub" epoch version
+ is deliberately distinct from any real upstream package version
+ so a future `dpkg -l openjdk-8-jre-headless` clearly indicates
+ the stub vs. the real thing, and so we never accidentally collide
+ with whatever version Ubuntu happens to ship (the previous stub
+ version "8u492-1" matched Ubuntu noble's package exactly, which
+ made apt think the real thing was already installed).
+ .
+ The real Java runtime (Canonical OpenJDK 21 LTS, since v3.10.13-13;
+ earlier releases pinned AdoptOpenJDK 8u265-b01 -- see CHANGELOG
+ v3.10.13-4 and v3.10.13-13 for the history) is shipped via apt's
+ openjdk-21-jre-headless to /usr/lib/jvm/java-21-openjdk-amd64
+ and is on the default PATH via the JAVA_HOME environment variable.
+ This stub continues to exist because the UniFi Video .deb's
+ Depends: line still names openjdk-8-jre-headless explicitly.
