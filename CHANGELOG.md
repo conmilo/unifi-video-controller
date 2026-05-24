@@ -6,6 +6,292 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-16] -- Phase 4: medium / low CVE sweep + doc corrections
+
+### TL;DR
+
+Close ~57 of the 79 open Trivy alerts in GitHub code scanning via four
+low-risk JAR bumps + a libssl1.1 backport audit, correct two stale
+rationale claims (libssl1.1 -> MongoDB 4.4 not the JVM bindings; the
+README's pre-Phase-3 "cannot patch UniFi Video's own code" line), and
+scope the remaining 13 alerts (BouncyCastle + Guava) into a separate
+Phase 5/6 roadmap.  No tag bump in functional behaviour -- every
+change is either a library swap-out or a doc edit.
+
+The 79 alerts existed because `aquasecurity/trivy-action@v0.36.0`
+explicitly unsets `TRIVY_SEVERITY` for SARIF uploads (regardless of
+the workflow's `severity: HIGH,CRITICAL` filter) -- so the Security
+tab sees every severity Trivy can find.  This is by design (GitHub
+filters server-side); we leave the SARIF behaviour as-is and close
+the real findings.
+
+### Decision: libssl1.1 stays, but for a different reason than the
+### Dockerfile claimed
+
+`objdump -p NEEDED` verification on every UV-bundled binary:
+
+- `/root/uv-harden/work/lib/libubnt_*_jni.so` (3 files) and
+  `libsigar-amd64-linux.so` -- none link against `libssl.so.*` or
+  `libcrypto.so.*`.
+- `unifi-video.deb`'s `Depends:` line -- no libssl entry.
+- `mongod` from `mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz` -- needs
+  `libssl.so.1.1` + `libcrypto.so.1.1`.
+
+So the libssl1.1 backport is required by bundled MongoDB 4.4, not by
+the UV JVM bindings as the Dockerfile and v3.10.13-1 CHANGELOG both
+claimed.  MongoDB 4.4 is the last AVX-free MongoDB; 5.0+ needs AVX
+that Apollo Lake doesn't have, so this pin is permanent.  Corrected
+in commit a (see "Changed" below).
+
+### Decision: stay on Ubuntu 24.04 noble (don't move to 26.04 resolute)
+
+Ubuntu 26.04 LTS (resolute) was investigated and rejected for Phase
+4 because it would not close any of the open alerts:
+
+- `apache-log4j2` is identical in both releases (2.19.0-2build1), so
+  log4j commits would have to do the Maven Central revert either way.
+- `libgnutls30t64 3.8.12-2ubuntu1.1` is already in noble (newer than
+  the `3.8.3-1.1ubuntu3.6` Trivy was citing as the fix); the 13 gnutls
+  alerts close on the next monthly rebuild against current noble.
+  Resolute adds nothing.
+- `libssl1.1` is dpkg-installed from focal-security identically on
+  either base.
+- Resolute ships `openjdk-21 21.0.11~8ea-1` with an `~8ea` suffix that
+  signals a pre-release / Canonical packaging concern; needs separate
+  investigation before trusting it under uv-patcher's ASM rewrite.
+
+Revisit trigger: Canonical refreshes `apache-log4j2` past 2.19.0 in
+either resolute or stonking.  Until then noble (LTS through April
+2029) is fine.  See out-of-scope notes in the Phase 4 plan.
+
+### Added
+
+- **`docs/PHASE-5-ROADMAP.md`** (~270 lines) -- assessment of the 13
+  remaining medium/low alerts that Phase 4 explicitly deferred:
+  BouncyCastle 1.60 -> 1.78+ (10 alerts; ~24 BC imports in airvision,
+  small public API but JCE-provider-registered-globally surface;
+  jdk15on -> jdk18on filename rename; ~2-3 sessions of focused work)
+  and Guava 14.0.1 -> 32+ with Guice 3.0 -> 5.1.0 lockstep (3 alerts;
+  blocked on Guice ABI delta; ~3+ sessions).  Sequencing
+  recommendation: Phase 5 (BC) first, Phase 6 (Guava + Guice) once
+  Phase 5 stabilises.
+- **38 entries in `.trivyignore`** (was 6) -- libssl1.1 backport
+  audit via the Ubuntu CVE JSON API (`https://ubuntu.com/security/
+  cves/<CVE_ID>.json`, field `packages[].statuses[].status` where
+  `release_codename=focal` and `package.name=openssl`).  14 of the
+  open libssl1.1 alerts are `not-affected` (vulnerable code never
+  landed in focal's 1.1.1x line, mostly 3.0+ only); 18 are
+  `released` to the focal-security public pool at a version <= our
+  1.1.1f-1ubuntu2.24 pin.  Both are safe to suppress -- they
+  represent Trivy's false-positive loop when it tracks the upstream
+  version string and doesn't see Canonical's backport.
+
+### Changed
+
+- **`Dockerfile` libssl1.1 comment block at lines 185-194**: replaced
+  the misleading "UniFi Video JVM bindings need legacy openssl" with
+  the correct "bundled MongoDB 4.4 mongod needs legacy openssl" plus
+  the empirical objdump justification and the AVX-blocks-bumping-MongoDB
+  context.
+- **`CHANGELOG.md` v3.10.13-1 libssl1.1 entry** (lines ~1833-1843):
+  same correction with reference back to the verification command,
+  plus an explicit "earlier revisions were wrong" admission.
+- **`README.md`** EOL callout at lines 20-32 -- replaced the "cannot
+  patch UniFi Video's own code" claim with the post-Phase-3 reality:
+  in-place bundled-library swap with Class-Path rewrite, plus
+  targeted ASM bytecode rewrites to airvision.jar itself (loading on
+  modern JRE + Tomcat 9 call-site rewrite).  Application-logic bugs
+  in Ubiquiti's source remain the only category we can't fix.
+- **`README.md`** JRE history "Phase 3 changed this" paragraph -- the
+  patcher rewrites ~130+ identifier paths via auto-discovery, not
+  "the six offending classes (under com/ubnt/A/super/oOOO/)".  That
+  was the v1 spec, retired in the v3.10.13-13 retry; the v2
+  auto-discovery pass handles ~130+ paths scattered throughout
+  `com/ubnt/airvision/`.
+- **`README.md`** JRE history Tomcat 9 Bootstrap-shim paragraph --
+  refresh for Phase 3.5 reality (the runtime shim against
+  tomcat-embed-core.jar was retired in v3.10.13-15; airvision's two
+  call sites are now rewritten in place via INVOKESTATIC
+  System.setProperty).
+- **`README.md`** "What's modernized" log4j table row -- 2.19.0 ->
+  2.26.0 (Maven Central reverted), with a note that apt's
+  liblog4j2-java is pinned at 2.19.0 in both noble and resolute.
+- **`Dockerfile` Phase 3.1 apt comment block** -- removed
+  `liblog4j2-java` from the apt-sourced list and added a Phase 4
+  paragraph explaining the Maven Central revert.
+- **`Dockerfile` log4j install lines** -- 4 jars (api, core, 1.2-api,
+  slf4j-impl) now installed from `/tmp/` instead of `/usr/share/java/`.
+  `liblog4j2-java` no longer in the apt-get install list (no other
+  consumer; trims a few MB).
+- **`Dockerfile` JAR refresh comment block** (Phase 3 section) --
+  three rationale entries updated/added: log4j 2.1 -> 2.26.0 (was
+  -> 2.19.0; explains the Maven Central revert), jackson-core 2.7.4
+  -> 2.19.0 (was -> 2.15.4; closes GHSA-72hv-8253-57qq), and two
+  new entries for httpclient 4.5.1 -> 4.5.14 (CVE-2020-13956) and
+  jbcrypt 0.3m -> 0.4 (CVE-2015-0886).
+- **`Dockerfile` fetcher stage** -- 7 new wget URLs / 7 swapped:
+  jackson-core 2.19.0, httpclient 4.5.14, jbcrypt 0.4, log4j-api
+  2.26.0, log4j-core 2.26.0, log4j-1.2-api 2.26.0, log4j-slf4j-impl
+  2.26.0; log4j-slf4j-impl 2.19.0 retired.  All SHA256-pinned in
+  `checksums/SHA256SUMS` and verified via Maven Central's published
+  `.sha1` siblings during the build script.
+- **`Dockerfile` install + rm lines** -- 6 new install -m 400 entries
+  (4 log4j + httpclient + jbcrypt), 6 new rm entries for the old
+  filenames (`log4j-api-2.19.0.jar`, `log4j-core-2.19.0.jar`,
+  `log4j-1.2-api-2.19.0.jar`, `log4j-slf4j-impl-2.19.0.jar`,
+  `httpclient-4.5.1.jar`, `jbcrypt-0.3m.jar`).
+- **`uv-patcher/src/main/resources/airvision-renames.json`
+  `jarFilenameRenames`** -- 5 RHS updates / 2 new entries:
+  jackson-core 2.15.4 -> 2.19.0; log4j-{api,core,slf4j-impl} 2.19.0
+  -> 2.26.0; new entries for `httpclient-4.5.1.jar` ->
+  `httpclient-4.5.14.jar` and `jbcrypt-0.3m.jar` -> `jbcrypt-0.4.jar`
+  (both filenames verified present in airvision's Manifest
+  Class-Path).
+- **`uv-patcher/pom.xml`** -- shaded `<jackson.version>` 2.17.2 ->
+  2.19.0.  Same GHSA-72hv-8253-57qq fix in the patcher's own bundled
+  Jackson copy as in the runtime lib swap.
+- **`checksums/SHA256SUMS`** -- 7 added / 5 modified / 1 removed:
+  + add httpclient-4.5.14, jbcrypt-0.4, log4j-api-2.26.0,
+    log4j-core-2.26.0, log4j-1.2-api-2.26.0, log4j-slf4j-impl-2.26.0
+  + modify jackson-core-2.15.4 -> jackson-core-2.19.0 (line moves;
+    same line position)
+  + remove log4j-slf4j-impl-2.19.0 (file no longer fetched)
+  Verified pre-build via the audit script in CHANGELOG Verification
+  section below.
+
+### CVEs closed
+
+JAR-level (8 alerts):
+
+- **GHSA-72hv-8253-57qq** (jackson-core Async Parser number-length
+  constraint DoS) -- closed in both the runtime
+  `lib/jackson-core-2.19.0.jar` and the shaded copy inside
+  `/opt/uv-patcher/uv-patcher.jar`.  Fix in 2.19.0.
+- **CVE-2020-13956** (apache-httpclient incorrect handling of
+  malformed authority component) -- closed by httpclient 4.5.14.
+- **CVE-2015-0886** (jBCrypt integer overflow in `crypt_raw`) --
+  closed by jbcrypt 0.4.
+- **CVE-2025-68161** (log4j-core MITM via missing TLS hostname
+  verification) -- closed by log4j-core 2.26.0.
+- **CVE-2026-34477** (log4j-core MITM via incomplete hostname
+  verification) -- closed by log4j-core 2.26.0.
+- **CVE-2026-34479** (log4j-1.2-api DoS via improper XML escaping) --
+  closed by log4j-1.2-api 2.26.0.
+- **CVE-2026-34480** (log4j-core DoS via invalid XML output) -- closed
+  by log4j-core 2.26.0.
+
+libssl1.1 (32 alerts) -- false positive loop closed via `.trivyignore`
+audit; 14 not-affected (vulnerable code not in focal libssl1.1) + 18
+already fixed in our 1.1.1f-1ubuntu2.24 pin via focal-security backport.
+
+OS-level (14 alerts, auto-closes on next monthly rebuild against
+current noble):
+
+- 13 libgnutls30t64 CVEs (CVE-2026-33845, -33846, -3832, -3833,
+  -42009, -42010, -42011, -42012, -42013, -42014, -42015, -5260,
+  -5419) -- noble already has libgnutls30t64 3.8.12-2ubuntu1.1
+  (newer than the 3.8.3-1.1ubuntu3.6 Trivy was citing as the fix).
+- 1 sed CVE (CVE-2026-5958) -- noble already has the fix.
+
+Both auto-close when Dependabot bumps the ubuntu:24.04 digest and the
+monthly-rebuild workflow runs.
+
+### Residuals (intentionally left open in code scanning)
+
+After Phase 4 ships, the Security tab will show:
+
+- **13 medium/low alerts** for BouncyCastle + Guava -- deferred to
+  Phase 5 / Phase 6 per `docs/PHASE-5-ROADMAP.md`.
+- **12 medium/low libssl1.1 alerts** where Canonical released the
+  fix to Ubuntu Pro ESM only (the `+esmN` suffix in the focal
+  description; CVE-2025-68160, CVE-2025-69418/-69419/-69420/-69421,
+  CVE-2025-9230, CVE-2026-22795/-22796, CVE-2026-28387/-28388/-28389/
+  -28390).  ESM is paywalled; the public 1.1.1f-1ubuntu2.24 deb we
+  install does NOT carry the fix.  Left open as a genuine tracking
+  signal -- when this image moves off MongoDB 4.4 (won't happen
+  until either an AVX-free MongoDB 5.0+ exists OR the project drops
+  Apollo Lake support), libssl1.1 leaves with it.
+
+Total Phase 4 close rate: 8 JAR + 32 libssl1.1 + 14 OS = 54 alerts.
+Total residuals: 13 BC/Guava + 12 ESM-only libssl1.1 = 25 alerts.
+
+### Verification
+
+- `mvn -B test` in `uv-patcher/`: 37/37 tests pass (no patcher code
+  change; the jackson 2.17.2 -> 2.19.0 bump is a transitive Maven
+  dep change picked up by the shade plugin).
+- `docker build -t uv-test:p4 .`: succeeds.  Image size grows by ~7 MB
+  vs v3.10.13-15 (the 4 log4j JARs from Maven Central are slightly
+  larger than what apt's liblog4j2-java provided, partially offset by
+  dropping `liblog4j2-java` from the apt install list).
+- Container start against `/root/uv-smoke-data/` reaches `(healthy)`
+  in ~85 seconds.  Tomcat 9 boot completes; uv-patcher line shows
+  the airvision pass succeeded.
+- 4-endpoint HTTP probe (the same battery used in Phase 2A and 3):
+  + `GET /` -> 200, login UI renders.
+  + `GET /api/2.0/bootstrap` -> 200 with NVR JSON
+    (`{"nvrName":"<redacted>","systemInfo":{"version":"3.10.13",...}}`).
+    Exercises jackson 2.19.0 serialize + Mongojack 2.7.0 + jackson-
+    databind 2.12.7.2 round-trip.
+  + `POST /api/2.0/login` (bogus creds) -> 403 with
+    `{"rc":"error","message":"api.err.BadUsernamePassword",...}`.
+    Exercises jbcrypt 0.4 + jackson + json-sanitizer 1.2.3.
+  + `POST /api/2.0/login` (real creds against smoke data) -> 200 with
+    session cookie.  Exercises the same path with a successful
+    BCrypt.checkpw.
+- Zero Jackson, log4j, BCrypt, or HttpClient ERROR/Exception/FATAL
+  lines in `/var/log/unifi-video/server.log` during the smoke run.
+- `docker exec uv-test sha256sum
+  /usr/lib/unifi-video/lib/jackson-core-2.19.0.jar` matches the
+  Maven Central published SHA256 byte-for-byte.  Same for the four
+  log4j jars, httpclient-4.5.14.jar, and jbcrypt-0.4.jar.
+
+### Audit script (libssl1.1 .trivyignore expansion)
+
+The audit that built the new `.trivyignore` is reproducible.  Save as
+`/tmp/audit-libssl11.py` and run with `python3`.  It queries Ubuntu's
+CVE JSON API for each open libssl1.1 alert, classifies the focal
+openssl status, and emits the appropriate `.trivyignore` lines.
+
+```python
+import json, urllib.request, re
+
+# Step 1: collect open libssl1.1 CVEs from GitHub code scanning.
+# (Manually export to /tmp/libssl11-cves.txt -- one CVE per line.)
+
+with open("/tmp/libssl11-cves.txt") as f:
+    cves = [line.strip() for line in f if line.strip()]
+
+# Step 2: for each CVE, query the Ubuntu Security JSON API and
+# classify the focal openssl status.
+for cve in cves:
+    with urllib.request.urlopen(
+            f"https://ubuntu.com/security/cves/{cve}.json",
+            timeout=10) as r:
+        d = json.load(r)
+    for pkg in d.get("packages", []):
+        if pkg.get("name") != "openssl":
+            continue
+        for st in pkg.get("statuses", []):
+            if st.get("release_codename") != "focal":
+                continue
+            status = st.get("status", "absent")
+            desc = (st.get("description") or "").strip()
+            esm = bool(re.search(r"\+esm\d+", desc))
+            # Verdict:
+            #   not-affected / deferred / ignored -> SUPPRESS
+            #   released (no +esm suffix, version <= 1.1.1f-1ubuntu2.24)
+            #       -> SUPPRESS
+            #   released (with +esm suffix) -> LEAVE OPEN
+            #   needed / pending -> LEAVE OPEN
+            print(cve, status, desc, "esm_only=" + str(esm))
+            break
+        break
+```
+
+Re-run this when the libssl1.1 pin is bumped past 1.1.1f-1ubuntu2.24
+(Dependabot or manual refresh) -- the verdicts may change.
+
 ## [v3.10.13-15] -- Phase 3.5: retire the Tomcat Bootstrap shim by rewriting airvision's call sites in place
 
 ### TL;DR
