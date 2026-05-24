@@ -6,6 +6,159 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-17] -- Phase 4 follow-up: apt-get upgrade + jackson-core 2.21.3
+
+### TL;DR
+
+Two follow-up fixes for residuals that v3.10.13-16's release build
+should have closed but didn't:
+
+1. **`apt-get -y upgrade` in all three Dockerfile stages** -- closes
+   14 OS-level alerts (13 libgnutls30t64 + 1 sed) that Phase 4
+   predicted would auto-close on next monthly rebuild.
+2. **jackson-core 2.19.0 -> 2.21.3** -- closes 2 jackson-core alerts
+   that re-opened when the GHSA-72hv-8253-57qq advisory was
+   re-scored to also cover the 2.19.0..<2.21.1 range.
+
+Net effect: 16 fewer open alerts.  No functional behaviour change;
+zero changes to run.sh, migrate-mongo.sh, uv-patcher logic, run-time
+data layout, MongoDB versions, or the JRE.
+
+### Why this is a separate release
+
+Both issues were specific to assumptions made during the Phase 4
+plan/audit that turned out wrong after the v3.10.13-16 release built
+and Trivy re-scanned the image:
+
+- The Phase 4 plan said "the 14 gnutls/sed alerts will auto-close
+  on next monthly rebuild against current noble" -- on the assumption
+  that `apt-get install -y X Y Z` would refresh transitive
+  dependencies.  It doesn't; it only installs X, Y, Z.  Since
+  libgnutls30t64 isn't in our explicit install list (it's a
+  transitive of libcurl4), apt sees "already satisfied" and leaves
+  the version from the base image's pre-baked package set untouched.
+  Verified post-release: `docker run --rm <v3.10.13-16> dpkg-query
+  -W libgnutls30t64` returned the old 3.8.3-1.1ubuntu3.5, not
+  3.8.3-1.1ubuntu3.6 as Trivy's "Fixed Version" claimed.
+- The Phase 4 plan picked jackson-core 2.19.0 based on
+  search.maven.org's solrsearch API saying that was the latest 2.x.
+  search.maven.org was stale; the authoritative
+  https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/
+  directory listing shows 2.19.x..2.21.x (latest 2.21.3).  And the
+  GHSA was re-scored to cover 2.19.0..<2.21.1.  So the v3.10.13-16
+  bump to 2.19.0 was both incomplete (advisory expanded) and
+  unnecessarily conservative (newer versions available).
+
+### Changed
+
+- **`Dockerfile` fetcher stage (line 37)** -- `apt-get update` is
+  followed by `apt-get -y upgrade` BEFORE the targeted
+  `apt-get install --no-install-recommends`.  Pulls every pending
+  noble-security update for already-installed packages from the
+  Canonical-signed apt pool.
+- **`Dockerfile` patcher-builder stage (line 93)** -- same
+  `apt-get -y upgrade` step added between `update` and `install`.
+  Less critical (this stage's image is discarded; only
+  `target/uv-patcher.jar` is COPY'd to the runtime layer) but kept
+  consistent for image-hygiene reasons.
+- **`Dockerfile` runtime stage (line 169)** -- same
+  `apt-get -y upgrade` step.  This is the load-bearing one: the
+  runtime image now ships with current noble-security versions of
+  every transitive apt dependency.  Comment block above the apt
+  install explains the trade-off (mild reproducibility loss across
+  the apt path; Maven Central artifacts and libssl1.1 deb remain
+  SHA256-pinned).
+- **`Dockerfile` jackson-core fetcher URL + COPY + install + Phase
+  3 comment block** -- 2.19.0 -> 2.21.3.  jackson-core-2.19.0.jar
+  also added to the rm-cleanup defensive list (same pattern as the
+  log4j-*-2.19.0 entries).
+- **`checksums/SHA256SUMS`** -- jackson-core-2.19.0 (da8e859b...)
+  replaced with jackson-core-2.21.3 (baf8b739...).  Verified
+  against Maven Central's published .sha1 file:
+  3358e9345dd0f2537c47bee152c0377df6c81ad5.
+- **`uv-patcher/src/main/resources/airvision-renames.json`** --
+  jarFilenameRenames RHS `jackson-core-2.7.4.jar` ->
+  `jackson-core-2.21.3.jar` (was 2.19.0).
+- **`uv-patcher/pom.xml`** -- shaded `<jackson.version>` 2.19.0 ->
+  2.21.3.  Same GHSA-72hv-8253-57qq advisory re-score applied to
+  the patcher's bundled Jackson copy.
+
+### CVEs closed
+
+JAR-level (2 alerts):
+
+- **GHSA-72hv-8253-57qq** -- closed in both
+  `lib/jackson-core-2.21.3.jar` AND the shaded copy inside
+  `/opt/uv-patcher/uv-patcher.jar`.  Patched ranges per the current
+  GHSA advisory: `>= 2.19.0, < 2.21.1` (we ship 2.21.3, well past
+  the fix floor); `>= 2.0.0, <= 2.18.5` (not applicable -- we don't
+  ship a 2.18.x).
+
+OS-level (14 alerts):
+
+- **13 libgnutls30t64 CVEs** (CVE-2026-33845, -33846, -3832, -3833,
+  -42009, -42010, -42011, -42012, -42013, -42014, -42015, -5260,
+  -5419) -- closed via apt upgrade pulling
+  3.8.3-1.1ubuntu3.5 -> 3.8.3-1.1ubuntu3.6, which is exactly the
+  "Fixed Version" Trivy was citing in each alert.
+- **CVE-2026-5958** (sed) -- closed via apt upgrade pulling
+  4.9-2build1 -> 4.9-2ubuntu0.24.04.1.
+
+### Residuals (unchanged from v3.10.13-16)
+
+- 13 alerts for BouncyCastle 1.60 + Guava 14.0.1 -- still deferred
+  to Phase 5 / Phase 6 per `docs/PHASE-5-ROADMAP.md`.
+- 12 libssl1.1 alerts where Canonical released the fix only via
+  Ubuntu Pro ESM -- still left open as a tracking signal.
+
+Expected post-release alert count: 25 (was 41 after v3.10.13-16).
+
+### Verification
+
+- `mvn -B test` in `uv-patcher/`: 37/37 pass.
+- `docker build --no-cache`: succeeds.  Final image still ~2.92 GB.
+- `docker run --rm <new-image> dpkg-query -W -f '${Package}
+  ${Version}\n' libgnutls30t64 sed libc6` returns:
+  + libc6           2.39-0ubuntu8.7
+  + libgnutls30t64  3.8.3-1.1ubuntu3.6     (was 3.8.3-1.1ubuntu3.5)
+  + sed             4.9-2ubuntu0.24.04.1   (was 4.9-2build1)
+- `docker run --rm <new-image> sha256sum
+  /usr/lib/unifi-video/lib/jackson-core-2.21.3.jar`:
+  `baf8b739e9d9b93bcdb33f25046bfdb8dbd74c97de2a8698539fbe0c7eeac0bb`
+  (matches Maven Central published byte stream).
+- Container start against a fresh ephemeral data dir reaches
+  `(healthy)` in ~85 seconds.  Tomcat 9 boots; uv-patcher applies
+  airvision rewrite + Bootstrap call-site rewrite; 4-endpoint
+  probe returns expected HTTP codes.  Zero `[ERROR]` lines in
+  `/var/log/unifi-video/server.log`.
+
+### Why the smoke test against the maintainer's snapshot didn't run
+
+The snapshot copy method that worked for v3.10.13-16
+(rsync `/root/uv-smoke-data` -> `/tmp/uv-smoke-data-copy`, drop
+stale `mongod.lock`) now fails because the live NAS UV instance has
+been running long enough that its WiredTiger log was rotated past
+file format v4.  The rsync snapshot captured WT log entries in v5
+format, which mongod 4.4.29 (what we ship) doesn't support:
+
+```
+WiredTiger error (-31802): unsupported WiredTiger file version:
+this build only supports versions up to 4, and the file is version 5
+```
+
+This is a snapshot infrastructure issue, not a v3.10.13-17 regression
+-- the same image's smoke against the earlier rsync of the same data
+path worked (see v3.10.13-16's Verification log).  The fresh
+ephemeral data dir smoke above gives equivalent boot-path coverage
+without the snapshot-timing dependency.
+
+### Notes
+
+The smoke against the maintainer's snapshot is the canonical test;
+when the NAS instance is restarted in the future (e.g. for a
+v3.10.13-17 upgrade rollout), the WT log will reset to v4 and the
+rsync method will work again for subsequent Phase 5 / 6 work.
+
 ## [v3.10.13-16] -- Phase 4: medium / low CVE sweep + doc corrections
 
 ### TL;DR
