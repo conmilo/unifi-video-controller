@@ -17,11 +17,19 @@ Additional inspiration / patches borrowed from
 [vuhuy/unifi-video-docker](https://github.com/vuhuy/unifi-video-docker).
 Both upstream authors are credited in `CHANGELOG.md` and `LICENSE`.
 
-> **UniFi Video itself is EOL.** Ubiquiti retired the product in 2020; no
-> further updates to the application or its bundled libraries will ever
-> ship. This project modernizes everything *around* the frozen `.deb`
-> (base OS, JRE, database, build pipeline) but cannot patch UniFi Video's
-> own code. Migrate to UniFi Protect if you can.
+> **UniFi Video itself is EOL.** Ubiquiti retired the product in 2020
+> and no Ubiquiti updates will ever ship.  This project modernizes the
+> base OS, JRE, database, and build pipeline; swaps in current versions
+> of every vulnerable bundled library (jackson, log4j, tomcat,
+> commons-*, etc.) with airvision's Manifest Class-Path rewritten in
+> lockstep at container start; and applies targeted ASM bytecode
+> rewrites to `airvision.jar` itself so it loads on a modern JRE and
+> calls Tomcat 9 APIs that replaced the Tomcat 7 instance methods it
+> was originally compiled against -- see the
+> [JRE history](#jre-history) section below for the empirical
+> backstory.  What we still can't fix is application-logic bugs in
+> Ubiquiti's source: we don't have it.  Migrate to UniFi Protect if
+> you can.
 
 ---
 
@@ -249,14 +257,24 @@ both reject; AdoptOpenJDK 8u265 accepts).  Releases `v3.10.13-4` ..
 for the full investigation.
 
 **Phase 3 changed this** by introducing `uv-patcher` -- a small
-ASM-based Java tool that rewrites the six offending classes (under
-`com/ubnt/A/super/oOOO/`) at container start.  Class names like
-`super` / `Object` / `String` become `ZSuper` / `ZObject` / `ZString`;
-method names containing literal `.` or matching Java reserved words
-get renamed to JLS-legal substitutes; every constant-pool reference
-is updated in lockstep via ASM's `ClassRemapper`.  The rewrite happens
-in the running container's writable layer **only** -- the image
-layer always carries pristine Ubiquiti bytes, so the image's
+ASM-based Java tool that scans `airvision.jar` at container start and
+rewrites every spec-illegal identifier it finds via deterministic
+escape rules.  In practice this hits ~130+ paths -- the v3.10.13-13
+initial spec hand-curated only six (the `com/ubnt/A/super/oOOO/`
+bundle), but the first smoke build revealed that Ubiquiti's
+obfuscator emits illegal class paths scattered throughout
+`com/ubnt/airvision/` as well; auto-discovery handles all of them by
+construction and survives future obfuscation pattern changes without
+spec edits.  Class simple names that are Java reserved words or
+`java.lang` types (`super` / `Object` / `String`) become `ZSuper` /
+`ZObject` / `ZString`; package segments that are keywords (`super` /
+`class` / `return`) become `Zsuper` / `Zclass` / `Zreturn`; method
+or field names containing literal `.` or matching keywords get
+renamed to JLS-legal substitutes (`new.super` -> `new_super`,
+`new` -> `znew`); every constant-pool reference is updated in
+lockstep via ASM's `ClassRemapper`.  The rewrite happens in the
+running container's writable layer **only** -- the image layer
+always carries pristine Ubiquiti bytes, so the image's
 `airvision.jar` matches Ubiquiti's published SHA256.  See
 [`uv-patcher/README.md`](uv-patcher/README.md) for the design and the
 committed rename specification (`uv-patcher/src/main/resources/airvision-renames.json`).
@@ -270,15 +288,26 @@ to Apr 2029).  Monthly rebuilds now advance the JRE within the 21 LTS
 line automatically via apt, the same way they advance the Ubuntu base
 and libssl1.1.
 
-The `uv-patcher` tool ALSO applies the Tomcat 9 Bootstrap shim
-(`setCatalinaBase(String)` / `setCatalinaHome(String)` instance
-methods that Tomcat 9 removed but airvision still calls).  Releases
-`v3.10.13-11` and `v3.10.13-12` baked that shim into a patched
-`tomcat-embed-core.jar` at image build time; Phase 3 moved it to
-runtime so the image now carries pristine
-`tomcat-embed-core-9.0.118.jar` from Maven Central (Trivy fingerprints
-it cleanly without the SHA1-mismatch entries those earlier releases
-needed in `.trivyignore`).
+The same `uv-patcher` pass ALSO handles airvision's two dangling
+Tomcat 9 Bootstrap call sites.  Tomcat 9 reduced
+`Bootstrap.setCatalinaBase(String)` and
+`Bootstrap.setCatalinaHome(String)` to no-arg statics (the values
+now come from system properties read in the static initialiser),
+but airvision's obfuscated `com/ubnt/common/oOOO/A.<init>` was
+compiled against Tomcat 7 and still calls them via `INVOKEVIRTUAL`.
+Releases `v3.10.13-11` and `v3.10.13-12` worked around this by baking
+a shim into a patched `tomcat-embed-core.jar` at image build time
+(re-adding the two methods).  Phase 3 (`v3.10.13-13`) moved the
+shim to runtime so the image layer's `tomcat-embed-core-9.0.118.jar`
+stays pristine.  Phase 3.5 (`v3.10.13-15`) retired the shim entirely
+by rewriting the two call sites in airvision's own bytecode --
+`INVOKEVIRTUAL setCatalinaBase/Home` becomes `INVOKESTATIC
+java/lang/System.setProperty("catalina.{base,home}", arg)`, which
+is the semantic intent of the original call.  The result:
+`tomcat-embed-core-9.0.118.jar` is now byte-pristine in BOTH the
+image layer AND the running container, matching its Maven Central
+SHA256 byte-for-byte.  Trivy fingerprints it cleanly without the
+SHA1-mismatch `.trivyignore` entries those earlier releases needed.
 
 ---
 
