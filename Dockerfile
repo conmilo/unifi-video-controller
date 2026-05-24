@@ -182,7 +182,16 @@ RUN apt-get update && \
     locale-gen en_US.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
 
-# -------- libssl1.1 (UniFi Video JVM bindings need legacy openssl) ---------
+# -------- libssl1.1 (bundled MongoDB 4.4 mongod needs legacy openssl) ------
+# The mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz binary at /opt/mongodb-4.4/
+# was built on Ubuntu 20.04 and dynamically links libssl.so.1.1 +
+# libcrypto.so.1.1.  Ubuntu 24.04 only ships libssl3, so we install
+# libssl1.1 from the focal-security pool.  This pin is permanent until we
+# can move off MongoDB 4.4 -- and we can't, because 5.0+ requires AVX and
+# the deploy target (Apollo Lake Celeron J3455) doesn't have AVX.
+# Verified via `objdump -p .../mongod | grep NEEDED`.
+# UV-bundled JNI .so files (libubnt_*_jni.so, libsigar-amd64-linux.so) and
+# the unifi-video.deb itself do NOT link against libssl/libcrypto.
 COPY --from=fetcher /artifacts/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb /tmp/libssl1.1.deb
 RUN dpkg -i /tmp/libssl1.1.deb && rm /tmp/libssl1.1.deb
 

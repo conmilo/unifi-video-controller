@@ -1832,8 +1832,15 @@ Original commit history is preserved.
   repo is no longer referenced.
 - **libssl1.1**: now pinned explicitly to `1.1.1f-1ubuntu2.24` from the
   focal-security pool. Ubuntu 24.04 doesn't include OpenSSL 1.1 by
-  default, but UniFi Video's bundled JVM bindings still link against
-  it.
+  default, but the bundled MongoDB 4.4 `mongod` binary (built on Ubuntu
+  20.04, dynamically linked against `libssl.so.1.1` + `libcrypto.so.1.1`
+  -- verified via `objdump -p .../mongod | grep NEEDED`) still needs it.
+  The pin is permanent until we can move off MongoDB 4.4, and we can't,
+  because MongoDB 5.0+ requires AVX which the Apollo Lake deploy target
+  doesn't have.  (Note: UV's own JNI .so files and the unifi-video.deb
+  itself do NOT link against libssl/libcrypto -- earlier CHANGELOG
+  revisions and the Dockerfile comment block incorrectly attributed
+  the dependency to the JVM bindings.  Corrected in v3.10.13-16.)
 - **log4j**: 2.17.0 -> 2.17.2. One micro-bump that closes
   CVE-2021-44832 in the JDBC Appender. SHA256-verified via Apache's
   published SHA512 chain.
