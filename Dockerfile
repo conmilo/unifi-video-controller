@@ -46,18 +46,24 @@ COPY checksums/SHA256SUMS ./SHA256SUMS
 # All artifacts downloaded in a single layer so failure to verify any one
 # aborts the build before later stages copy from this image.
 #
-# Phase 3.1: log4j (api/core/1.2-api), commons-collections-3.2.2, jettison-1.5.4,
-# and the JRE itself are sourced from Ubuntu noble apt at runtime-stage install
-# time -- see the apt-get install block in the runtime stage.  We still fetch
-# log4j-slf4j-impl from Maven Central because apt's liblog4j2-java only ships
-# log4j-to-slf4j (the opposite-direction binding); airvision needs the
-# slf4j -> log4j2 binding.
+# Phase 3.1 moved log4j (api/core/1.2-api), commons-collections-3.2.2,
+# jettison-1.5.4, and the JRE itself to Ubuntu noble apt at runtime-stage
+# install time.  Commons-collections, jettison, and the JRE remain on apt.
+# Phase 4 (v3.10.13-16) moved log4j BACK to Maven Central because Ubuntu
+# noble's apache-log4j2 source package is still at 2.19.0-2build1, which
+# carries CVE-2025-68161 and CVE-2026-34477/34479/34480; the fixes need
+# log4j 2.25+, and Canonical has not refreshed the package in either
+# noble OR the new resolute (26.04 LTS).  We track all four log4j JARs
+# from Maven Central directly until apt catches up.
 RUN set -eux; \
     wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz; \
     wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu1804-4.2.25.tgz; \
     wget -q https://dl.ubnt.com/firmwares/ufv/v3.10.13/unifi-video.Ubuntu18.04_amd64.v3.10.13.deb; \
     wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb; \
-    wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j-impl/2.19.0/log4j-slf4j-impl-2.19.0.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.26.0/log4j-api-2.26.0.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.26.0/log4j-core-2.26.0.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.26.0/log4j-1.2-api-2.26.0.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j-impl/2.26.0/log4j-slf4j-impl-2.26.0.jar; \
     wget -q https://repo1.maven.org/maven2/commons-io/commons-io/2.18.0/commons-io-2.18.0.jar; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.19.0/jackson-core-2.19.0.jar; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.12.7.2/jackson-databind-2.12.7.2.jar; \
@@ -133,9 +139,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #
 # Phase 3.1 -- moved from manual tarball/Maven fetch to apt for these:
 #   - openjdk-21-jre-headless    (Canonical OpenJDK 21 LTS; replaces Temurin tarball)
-#   - liblog4j2-java             (log4j 2.19.0; replaces apache-log4j-2.17.2 tarball)
 #   - libcommons-collections3-java (3.2.2; replaces Maven Central wget)
 #   - libjettison-java           (1.5.4; replaces Maven Central wget)
+#
+# Phase 4 (v3.10.13-16) -- reverted log4j from apt back to Maven Central.
+# liblog4j2-java in BOTH noble and resolute (26.04 LTS) is pinned at
+# 2.19.0-2build1, which carries CVE-2025-68161 and CVE-2026-34477/34479/
+# 34480.  The fixes need log4j 2.25+, and Canonical has not refreshed
+# the package.  All four log4j JARs (api, core, 1.2-api, slf4j-impl)
+# now come from the fetcher stage at 2.26.0; liblog4j2-java is no
+# longer installed.
 #
 # Phase 3.2 -- added JAXB + JAF runtime libraries removed from the JDK in
 # Java 11.  airvision (Java 8 build) still imports javax.xml.bind and
@@ -166,7 +179,6 @@ RUN apt-get update && \
         libjaxb-api-java \
         libjaxb-java \
         libjettison-java \
-        liblog4j2-java \
         libxi6 \
         libxrender1 \
         libxtst6 \
@@ -325,17 +337,20 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 # uv-patcher/src/main/resources/airvision-renames.json (kept in lockstep
 # with this file; any rename added here must be mirrored there).
 #
-# - log4j 2.1 -> 2.19.0:                closes CVE-2017-5645, CVE-2021-44228
-#                                       [Log4Shell], CVE-2021-45046, -45105,
-#                                       -44832.  Sourced from apt's
-#                                       liblog4j2-java since Phase 3.1
-#                                       (Ubuntu noble carries 2.19.0);
-#                                       log4j-slf4j-impl-2.19.0 still comes
-#                                       from Maven Central because apt's
-#                                       liblog4j2-java doesn't bundle it.
-#                                       Filename normalised; v3.10.13-3's
-#                                       --backup gymnastics + .trivyignore false-
-#                                       positives are gone.
+# - log4j 2.1 -> 2.26.0:                closes the original Log4Shell set
+#                                       (CVE-2017-5645, CVE-2021-44228 [Log4Shell],
+#                                       -45046, -45105, -44832) AND the Phase 4
+#                                       set (CVE-2025-68161, CVE-2026-34477,
+#                                       CVE-2026-34479, CVE-2026-34480).
+#                                       Phase 3.1 sourced log4j 2.19.0 from
+#                                       apt's liblog4j2-java; Phase 4
+#                                       (v3.10.13-16) reverted to Maven
+#                                       Central at 2.26.0 because apt's
+#                                       liblog4j2-java is pinned at 2.19.0 in
+#                                       BOTH noble AND the new resolute LTS
+#                                       (26.04) and Canonical has not
+#                                       refreshed it.  When apt catches up to
+#                                       2.25+ we can move back.
 # - commons-collections 3.2 -> 3.2.2:   closes CVE-2015-6420, CVE-2015-7501.
 # - commons-io 2.6 -> 2.18.0:           closes CVE-2024-47554.
 # - commons-beanutils 1.7.0 -> 1.11.0:  closes CVE-2019-10086, CVE-2025-48734.
@@ -373,7 +388,7 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 #                                       classes ship inside tomcat-embed-core
 #                                       in 9.x).
 # - tomcat-embed-logging-log4j.jar:     REMOVED (no Tomcat 9 equivalent; airvision
-#                                       uses log4j 2.19.0 directly; bridge unused).
+#                                       uses log4j 2.26.0 directly; bridge unused).
 # - httpclient 4.5.1 -> 4.5.14:         closes CVE-2020-13956 (incorrect handling
 #                                       of malformed authority component in
 #                                       request URIs).  4.5.x is ABI-stable
@@ -386,7 +401,10 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 #                                       any (password, salt) input -- existing
 #                                       bcrypt hashes in the user DB remain
 #                                       valid.  Phase 4 bump.
-COPY --from=fetcher /artifacts/log4j-slf4j-impl-2.19.0.jar                   /tmp/log4j-slf4j-impl-2.19.0.jar
+COPY --from=fetcher /artifacts/log4j-api-2.26.0.jar                          /tmp/log4j-api-2.26.0.jar
+COPY --from=fetcher /artifacts/log4j-core-2.26.0.jar                         /tmp/log4j-core-2.26.0.jar
+COPY --from=fetcher /artifacts/log4j-1.2-api-2.26.0.jar                      /tmp/log4j-1.2-api-2.26.0.jar
+COPY --from=fetcher /artifacts/log4j-slf4j-impl-2.26.0.jar                   /tmp/log4j-slf4j-impl-2.26.0.jar
 COPY --from=fetcher /artifacts/commons-io-2.18.0.jar                         /tmp/commons-io-2.18.0.jar
 COPY --from=fetcher /artifacts/commons-beanutils-1.11.0.jar                  /tmp/commons-beanutils-1.11.0.jar
 COPY --from=fetcher /artifacts/jackson-databind-2.12.7.2.jar                 /tmp/jackson-databind-2.12.7.2.jar
@@ -404,15 +422,16 @@ COPY --from=fetcher /artifacts/jbcrypt-0.4.jar                               /tm
 RUN set -eux; \
     cd /usr/lib/unifi-video/lib; \
     \
-    # Phase 3.1: log4j (api/core/1.2-api), commons-collections, and jettison \
-    # come from apt's /usr/share/java tree.  We install -m 400 copies (not \
-    # symlinks) so the lib/ tree stays self-contained and Trivy fingerprints \
-    # the bytes directly.  log4j-slf4j-impl is not packaged by apt and comes \
-    # from the fetcher stage. \
-    install -m 400 -o unifi-video -g unifi-video /usr/share/java/log4j-api-2.19.0.jar               ./log4j-api-2.19.0.jar; \
-    install -m 400 -o unifi-video -g unifi-video /usr/share/java/log4j-core-2.19.0.jar              ./log4j-core-2.19.0.jar; \
-    install -m 400 -o unifi-video -g unifi-video /usr/share/java/log4j-1.2-api-2.19.0.jar           ./log4j-1.2-api-2.19.0.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/log4j-slf4j-impl-2.19.0.jar                   ./log4j-slf4j-impl-2.19.0.jar; \
+    # Phase 3.1: commons-collections and jettison come from apt's \
+    # /usr/share/java tree.  We install -m 400 copies (not symlinks) so the \
+    # lib/ tree stays self-contained and Trivy fingerprints the bytes directly. \
+    # Phase 4: log4j (all four jars: api / core / 1.2-api / slf4j-impl) is \
+    # now Maven-Central-sourced at 2.26.0 instead of apt's pinned 2.19.0 -- \
+    # see fetcher-stage comment block for rationale. \
+    install -m 400 -o unifi-video -g unifi-video /tmp/log4j-api-2.26.0.jar                          ./log4j-api-2.26.0.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/log4j-core-2.26.0.jar                         ./log4j-core-2.26.0.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/log4j-1.2-api-2.26.0.jar                      ./log4j-1.2-api-2.26.0.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/log4j-slf4j-impl-2.26.0.jar                   ./log4j-slf4j-impl-2.26.0.jar; \
     install -m 400 -o unifi-video -g unifi-video /usr/share/java/commons-collections3-3.2.2.jar     ./commons-collections-3.2.2.jar; \
     install -m 400 -o unifi-video -g unifi-video /usr/share/java/jettison-1.5.4.jar                 ./jettison-1.5.4.jar; \
     \
@@ -473,6 +492,10 @@ RUN set -eux; \
         tomcat-embed-logging-log4j.jar \
         httpclient-4.5.1.jar \
         jbcrypt-0.3m.jar \
+        log4j-api-2.19.0.jar \
+        log4j-core-2.19.0.jar \
+        log4j-1.2-api-2.19.0.jar \
+        log4j-slf4j-impl-2.19.0.jar \
         ./*.jar~; \
     \
     # Cleanup tmp scratch. \

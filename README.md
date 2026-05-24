@@ -41,7 +41,7 @@ Both upstream authors are credited in `CHANGELOG.md` and `LICENSE`.
 | JRE | Ubuntu's `openjdk-8-jre-headless=8u162-b12-1` (frozen 2018) | Canonical OpenJDK 21 LTS (apt-installed) + uv-patcher runtime tool that rewrites `airvision.jar`'s spec-illegal identifiers at container start (see [Security § JRE history](#jre-history)). Earlier releases (v3.10.13-4 .. -12) pinned AdoptOpenJDK 8u265-b01; the pin was retired in v3.10.13-13. |
 | MongoDB | 4.0.x from MongoDB's deprecated bionic apt repo | 4.4.29 runtime + 4.2.25 fCV stepper |
 | libssl1.1 | (implicit in base) | Pinned `1.1.1f-1ubuntu2.24` from focal-security |
-| log4j | 2.17.0 | 2.19.0 (apt-sourced from Ubuntu noble; closes CVE-2021-44832 + later patch-level CVEs) |
+| log4j | 2.17.0 | 2.26.0 (Maven Central; closes CVE-2021-44832 + the Phase 4 set of CVE-2025-68161 / CVE-2026-34477 / -34479 / -34480.  Phase 3.1 sourced 2.19.0 from apt's `liblog4j2-java`; Phase 4 reverted to Maven Central because apt's package is pinned at 2.19.0 in BOTH noble and resolute.) |
 | Init | `runit` (phusion baseimage) | `tini` PID 1 |
 | Supply chain | Untracked downloads | All 6 third-party artifacts SHA256-pinned in `checksums/SHA256SUMS` and verified before the runtime stage is built |
 | Distribution | Build locally | `ghcr.io/conmilo/unifi-video-controller:<tag>` + GitHub Release `.tar.zst` / `.tar.gz` |
