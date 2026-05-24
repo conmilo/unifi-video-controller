@@ -78,7 +78,7 @@ RUN set -eux; \
 # small Java artefact that the runtime stage consumes via COPY --from=.
 # See uv-patcher/README.md for the design.
 # ---------------------------------------------------------------------------
-FROM eclipse-temurin:21-jdk AS patcher-builder
+FROM eclipse-temurin:25-jdk AS patcher-builder
 
 # hadolint ignore=DL3008
 RUN apt-get update && \
@@ -441,7 +441,7 @@ RUN set -eux; \
         tomcat-dbcp.jar \
         tomcat-embed-logging-juli.jar \
         tomcat-embed-logging-log4j.jar \
-        *.jar~; \
+        ./*.jar~; \
     \
     # Cleanup tmp scratch. \
     rm -rf /tmp/*.jar
