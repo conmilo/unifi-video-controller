@@ -79,6 +79,9 @@ RUN set -eux; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.12.7/jackson-annotations-2.12.7.jar; \
     wget -q https://repo1.maven.org/maven2/commons-beanutils/commons-beanutils/1.11.0/commons-beanutils-1.11.0.jar; \
     wget -q https://repo1.maven.org/maven2/com/mikesamuel/json-sanitizer/1.2.3/json-sanitizer-1.2.3.jar; \
+    wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/1.84/bcprov-jdk18on-1.84.jar; \
+    wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-jdk18on/1.84/bcpkix-jdk18on-1.84.jar; \
+    wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcutil-jdk18on/1.84/bcutil-jdk18on-1.84.jar; \
     wget -q https://repo1.maven.org/maven2/com/googlecode/owasp-java-html-sanitizer/owasp-java-html-sanitizer/20260101.1/owasp-java-html-sanitizer-20260101.1.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-core/9.0.118/tomcat-embed-core-9.0.118.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-el/9.0.118/tomcat-embed-el-9.0.118.jar; \
@@ -514,6 +517,43 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 #                                       any (password, salt) input -- existing
 #                                       bcrypt hashes in the user DB remain
 #                                       valid.  Phase 4 bump.
+# - BouncyCastle 1.60 -> 1.84:          Phase 5 / v3.10.13-19 -- closes 10
+#   (jdk15on -> jdk18on artifact         Trivy alerts (7 distinct CVEs across
+#   rename; bcprov-ext discontinued;     bcpkix/bcprov: CVE-2026-5588,
+#   bctls retired)                       CVE-2025-8916, CVE-2024-30171/29857,
+#                                       CVE-2023-33202, CVE-2020-26939/15522).
+#                                       Three artifacts installed (bcprov-jdk18on,
+#                                       bcpkix-jdk18on, bcutil-jdk18on); the
+#                                       latter is a transitive dep new in 1.71+
+#                                       (BC's shared utility classes formerly
+#                                       inside bcprov; bcpkix's pom requires it).
+#                                       Two legacy artifacts dropped entirely:
+#                                       (a) bcprov-ext-jdk15on-160.jar -- the
+#                                       jdk18on equivalent was discontinued at
+#                                       1.78.1 (404 on Maven Central) and not
+#                                       republished in 1.79+.  airvision uses
+#                                       only standard NIST P-256/P-384 + RSA
+#                                       which all live in main bcprov, so the
+#                                       ext-package contents (additional EC
+#                                       curves like GOST, less-common
+#                                       Camellia/SEED variants) aren't needed.
+#                                       (b) bctls-jdk15on-160.jar -- BC's JSSE
+#                                       provider, currently on disk but unused
+#                                       (airvision registers BouncyCastleProvider
+#                                       only, never BouncyCastleJsseProvider; JDK
+#                                       21 JSSE handles the :7443/:7442 connectors
+#                                       per Phase 3.4).  Mixing bctls-1.60 with
+#                                       bcprov-1.84 on the same classpath would
+#                                       risk LinkageError if any code path ever
+#                                       did instantiate a bctls class, so we
+#                                       remove the file and strip the manifest
+#                                       reference via the patcher.
+#                                       The 1.78.1 release the Phase 5 roadmap
+#                                       originally targeted is superseded by
+#                                       1.84 (current latest as of 2026-05-15);
+#                                       1.84 is the same Maven Central drop AWS
+#                                       SDK v2 and Apache Tomcat 11 GA both
+#                                       consume.
 COPY --from=fetcher /artifacts/log4j-api-2.26.0.jar                          /tmp/log4j-api-2.26.0.jar
 COPY --from=fetcher /artifacts/log4j-core-2.26.0.jar                         /tmp/log4j-core-2.26.0.jar
 COPY --from=fetcher /artifacts/log4j-1.2-api-2.26.0.jar                      /tmp/log4j-1.2-api-2.26.0.jar
@@ -532,6 +572,9 @@ COPY --from=fetcher /artifacts/tomcat-embed-websocket-9.0.118.jar            /tm
 COPY --from=fetcher /artifacts/tomcat-dbcp-9.0.118.jar                       /tmp/tomcat-dbcp-9.0.118.jar
 COPY --from=fetcher /artifacts/httpclient-4.5.14.jar                         /tmp/httpclient-4.5.14.jar
 COPY --from=fetcher /artifacts/jbcrypt-0.4.jar                               /tmp/jbcrypt-0.4.jar
+COPY --from=fetcher /artifacts/bcprov-jdk18on-1.84.jar                       /tmp/bcprov-jdk18on-1.84.jar
+COPY --from=fetcher /artifacts/bcpkix-jdk18on-1.84.jar                       /tmp/bcpkix-jdk18on-1.84.jar
+COPY --from=fetcher /artifacts/bcutil-jdk18on-1.84.jar                       /tmp/bcutil-jdk18on-1.84.jar
 RUN set -eux; \
     cd /usr/lib/unifi-video/lib; \
     \
@@ -578,11 +621,24 @@ RUN set -eux; \
     install -m 400 -o unifi-video -g unifi-video /tmp/httpclient-4.5.14.jar                               ./httpclient-4.5.14.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/jbcrypt-0.4.jar                                     ./jbcrypt-0.4.jar; \
     \
+    # Phase 5 (v3.10.13-19): BouncyCastle 1.60 -> 1.84.  See the comment \
+    # block above the COPY lines for the full rationale and the artifact-set \
+    # choice (3 in, 4 out).  These three jars together replace bcprov-jdk15on \
+    # + bcpkix-jdk15on + the dropped bcprov-ext/bctls; the patcher will \
+    # rewrite airvision.jar's Class-Path entries in lockstep. \
+    install -m 400 -o unifi-video -g unifi-video /tmp/bcprov-jdk18on-1.84.jar                             ./bcprov-jdk18on-1.84.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/bcpkix-jdk18on-1.84.jar                             ./bcpkix-jdk18on-1.84.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/bcutil-jdk18on-1.84.jar                             ./bcutil-jdk18on-1.84.jar; \
+    \
     # Remove the original .deb-installed legacy filenames (and any .jar~ \
     # backup leftovers from earlier image layers).  Each rm corresponds to \
     # an entry in uv-patcher/src/main/resources/airvision-renames.json: \
     # the patcher rewrites airvision.jar's Class-Path at runtime to reference \
     # the new filenames installed above. \
+    # Phase 5 (v3.10.13-19): drop all four legacy BC 1.60 jdk15on jars (the \
+    # .deb installs all of them; the Manifest Class-Path references all four \
+    # too).  See the BC comment block above for the audit trail on why each \
+    # of the four is retired vs swapped. \
     rm -f \
         log4j-api-2.1.jar \
         log4j-core-2.1.jar \
@@ -610,6 +666,10 @@ RUN set -eux; \
         log4j-1.2-api-2.19.0.jar \
         log4j-slf4j-impl-2.19.0.jar \
         jackson-core-2.19.0.jar \
+        bcprov-jdk15on-160.jar \
+        bcprov-ext-jdk15on-160.jar \
+        bcpkix-jdk15on-160.jar \
+        bctls-jdk15on-160.jar \
         ./*.jar~; \
     \
     # Cleanup tmp scratch. \
