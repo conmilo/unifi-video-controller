@@ -53,16 +53,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # docker/metadata-action auto-generates manifest-level annotations
-      # from the labels listed here (the org.opencontainers.image.* set).
-      # The description is the load-bearing one for the GHCR package page,
-      # which reads from manifest annotations rather than image-config
-      # labels.  The Dockerfile's own LABEL org.opencontainers.image.* set
-      # still applies to the image config (visible via `docker inspect`)
-      # but those don't bubble up to the registry UI.
+      # metadata-action has TWO independent input lists:
+      #   - labels:      drives image-config labels (visible via `docker inspect`).
+      #                  User-supplied values overwrite the auto-generated GitHub
+      #                  defaults (repo name/description/etc.).
+      #   - annotations: drives OCI manifest annotations (what the GHCR package
+      #                  page renders).  Does NOT inherit from labels: -- if this
+      #                  block is omitted, the annotations output falls back to
+      #                  the auto-generated GitHub defaults (repo name as title,
+      #                  repo description as description, etc.).  Empirically
+      #                  verified in the v3.10.13-20 release log: labels: was
+      #                  honoured but annotations: was absent, so the manifest
+      #                  carried defaults like
+      #                  "Docker for Unifi-Video Controller (Ubiquiti Networks)"
+      #                  instead of our custom description.  v3.10.13-21 adds
+      #                  the explicit annotations: block to fix this.
+      #
+      # DOCKER_METADATA_ANNOTATIONS_LEVELS=manifest,index pushes the generated
+      # annotations to BOTH the per-platform image manifest AND the multi-arch
+      # image index.  GHCR's package UI reads from the index for multi-arch
+      # images, which our provenance + SBOM attestations produce (the build
+      # output is an OCI image index, not a single manifest).  Default of
+      # "manifest" alone is insufficient -- the index would carry no
+      # description and the UI would still show "no description".
       - name: docker metadata
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -70,6 +88,15 @@ jobs:
             type=raw,value=latest
             type=sha,format=short,prefix=sha-
           labels: |
+            org.opencontainers.image.title=UniFi Video Controller (modernized)
+            org.opencontainers.image.description=UniFi Video 3.10.13 on Ubuntu 24.04 + OpenJDK 21 LTS + MongoDB 4.4 (with 4.0->4.2->4.4 fCV migration); airvision identifier rewrite + Tomcat 9 Bootstrap shim applied at runtime by uv-patcher
+            org.opencontainers.image.version=${{ steps.tag.outputs.name }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/README.md
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.vendor=conmilo
+          annotations: |
             org.opencontainers.image.title=UniFi Video Controller (modernized)
             org.opencontainers.image.description=UniFi Video 3.10.13 on Ubuntu 24.04 + OpenJDK 21 LTS + MongoDB 4.4 (with 4.0->4.2->4.4 fCV migration); airvision identifier rewrite + Tomcat 9 Bootstrap shim applied at runtime by uv-patcher
             org.opencontainers.image.version=${{ steps.tag.outputs.name }}
