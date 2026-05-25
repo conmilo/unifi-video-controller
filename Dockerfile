@@ -9,7 +9,7 @@
 #          container start.  This unblocked the move off the AdoptOpenJDK
 #          8u265-b01 pin that v3.10.13-4 required.  See README.md "JRE
 #          history" for the empirical backstory.
-# MongoDB: 4.4.x runtime DB (default 4.4.29; tunable via ARG MONGO44_VERSION)
+# MongoDB: 4.4.x runtime DB (default 4.4.30; tunable via ARG MONGO44_VERSION)
 #          + 4.2.x mongod-only fCV stepper (default 4.2.25, ~71 MB on disk;
 #            tunable via ARG MONGO42_VERSION; see mongo42-extractor stage).
 #          The 4.4 major-version ceiling is intentional and dual-anchored:
@@ -46,14 +46,14 @@ ARG UBUNTU_DIGEST=sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194
 ARG AL2_DIGEST=sha256:53c36e786bbe63f21fac81b005149233df0abd1eb0bb13a49308dd03b3e3b1a2
 
 # MongoDB tarball version pins.  Tunable at build time, e.g.:
-#   docker buildx build --build-arg MONGO44_VERSION=4.4.30 ...
+#   docker buildx build --build-arg MONGO44_VERSION=4.4.29 ...
 # Each value is tied to a matching SHA256 entry in checksums/SHA256SUMS,
 # so bumping a value here without regenerating SHA256SUMS will fail the
 # fetcher's checksum verification -- the right failure mode for an
 # unverified binary.  The 4.4 major-version ceiling is intentional; see
 # the header comment above for the dual-constraint rationale (driver +
 # AVX) that blocks MongoDB 5.0+.
-ARG MONGO44_VERSION=4.4.29
+ARG MONGO44_VERSION=4.4.30
 ARG MONGO42_VERSION=4.2.25
 
 # ---------------------------------------------------------------------------
@@ -304,6 +304,31 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the openjdk-8-jre-headless equivs stub BEFORE this apt-install so the
 # unifi-video .deb's hard-coded Depends: line resolves; the stub is a
 # zero-file metapackage, the real JRE is Canonical's openjdk-21-jre-headless.
+#
+# Phase 3.2 follow-up (v3.10.13-22): these four lib*-java packages drag in
+# a heavy transitive dependency chain via libjaxb-java -> libistack-commons-
+# java -> ant + ant-optional + libdom4j-java + libplexus-archiver-java +
+# libmaven3-core-java + libwagon-http-java + the libcommons-{io,compress,
+# lang3}-java family.  Grype's SBOM scan flagged seven CVEs against that
+# chain (dom4j 2.1.1 CVE-2020-10683 CRITICAL, commons-io 2.11.0 CVE-2024-
+# 47554 HIGH, plexus-archiver CVE-2023-37460 HIGH, plexus-utils CVE-2025-
+# 67030 HIGH, commons-compress 1.25.0 CVE-2024-25710/26308 MEDIUM, commons-
+# lang3 3.14.0 CVE-2025-48924 MEDIUM) plus ~370 unfixed Ubuntu CVEs in the
+# ant family.  airvision itself doesn't load any of those JARs --
+# /usr/share/java/ is not on its classpath -- but the .deb only ships the
+# OLD versions of commons-collections + jettison (no version-named
+# commons-collections.jar + jettison-1.1.jar) and ZERO JAXB JARs, so we
+# need the apt packages as the source for the install -m 400 step lower
+# in the runtime stage that copies the modern JARs into /usr/lib/unifi-
+# video/lib/.  The strategy adopted in v3.10.13-22: install + copy + purge,
+# all done in the apt-install-time tax once.  The purge step lives at the
+# END of the .deb-extract + JAR-install RUN block (search for 'Phase 3.2
+# purge' below) and removes the four lib*-java packages plus their
+# autoremovable transitive deps after the JARs have been COPIED into the
+# airvision lib directory.  Net effect: the apt-supplied JAR bytes live
+# in /usr/lib/unifi-video/lib/ (airvision's actual classpath); /usr/share/
+# java/ is empty in the final image layer; dpkg state no longer records
+# the packages; Trivy/Grype/SBOM stop flagging the seven CVEs.
 #
 # Phase 4 follow-up (v3.10.13-17): `apt-get -y upgrade` pulls pending
 # noble-security patches for transitive dependencies already present in
@@ -748,7 +773,23 @@ RUN set -eux; \
         ./*.jar~; \
     \
     # Cleanup tmp scratch. \
-    rm -rf /tmp/*.jar
+    rm -rf /tmp/*.jar; \
+    \
+    # Phase 3.2 purge (v3.10.13-22): now that the JAXB / activation / istack \
+    # / stax / txw2 / jettison / commons-collections3 JARs have been COPIED \
+    # into /usr/lib/unifi-video/lib/ (where airvision's MANIFEST.MF Class- \
+    # Path: resolves them), the four lib*-java apt packages -- and the heavy \
+    # ant + dom4j + plexus + maven + libcommons-{io,compress,lang3}-java \
+    # transitive chain they dragged in -- are no longer needed.  Purge them, \
+    # then autoremove the now-unreferenced transitive deps.  See the comment \
+    # block above the apt-get install RUN above for the full audit trail. \
+    apt-get -y purge \
+        libjaxb-api-java \
+        libjaxb-java \
+        libjettison-java \
+        libcommons-collections3-java; \
+    apt-get -y autoremove --purge; \
+    rm -rf /var/lib/apt/lists/*
 
 # -------- uv-patcher runtime tool ------------------------------------------
 # COPY in the shaded jar + the airvision rename spec.  run.sh invokes the

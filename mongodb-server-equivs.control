@@ -6,9 +6,9 @@ Priority: optional
 Standards-Version: 3.9.2
 
 Package: mongodb-server
-Version: 4.4.29
+Version: 4.4.30
 Maintainer: conmilo <noreply@github.com>
-Provides: mongodb-org-server (= 4.4.29), mongodb-10gen (= 4.4.29)
+Provides: mongodb-org-server (= 4.4.30), mongodb-10gen (= 4.4.30)
 Architecture: amd64
 Description: MongoDB 4.4 server equivs stub
  This is a metapackage that satisfies the UniFi Video controller
