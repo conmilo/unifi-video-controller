@@ -6,7 +6,7 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
-## [v3.10.13-23] -- MongoDB 4.4.30 + prune redundant Java apt packages (closes 8 CVEs)
+## [v3.10.13-22] -- MongoDB 4.4.30 + prune redundant Java apt packages (closes 8 CVEs)
 
 ### TL;DR
 
@@ -36,7 +36,7 @@ Two CVE-driven changes shipping together:
 
 **Zero behavioural change** beyond the version bump.  Image bytes
 for airvision's actual classpath (`/usr/lib/unifi-video/lib/`) are
-identical to v3.10.13-22.  MongoDB wire protocol, WiredTiger
+identical to v3.10.13-21.  MongoDB wire protocol, WiredTiger
 storage format, and fCV semantics are unchanged (4.4.29 -> 4.4.30
 is a routine point release within the same major).  Image total
 size: 2.91 GB -> 2.34 GB (~570 MB compressed savings from the
@@ -150,7 +150,7 @@ puts them) into `/usr/lib/unifi-video/lib/` (where airvision's
 `MANIFEST.MF Class-Path:` resolves them -- all entries are
 relative names that resolve against airvision.jar's own location).
 
-What got discovered during the v3.10.13-22 Grype-vs-Trivy
+What got discovered during this release's Grype-vs-Trivy
 investigation: `libjaxb-java` drags in a heavy transitive chain via
 `libistack-commons-java` -> `ant` + `ant-optional` + `libdom4j-java`
 + `libplexus-archiver-java` + `libmaven3-core-java` +
@@ -198,7 +198,7 @@ The runtime stage now follows this sequence:
      collections).  This is the existing copy step from Phase 3.1 /
      3.2; unchanged.
 
-  3. **NEW (v3.10.13-23)**: `apt-get -y purge libjaxb-api-java
+  3. **NEW (v3.10.13-22)**: `apt-get -y purge libjaxb-api-java
      libjaxb-java libjettison-java libcommons-collections3-java
      && apt-get -y autoremove --purge` at the END of the same RUN
      block.  Since the JARs were COPIED (not symlinked) in step 2,
@@ -323,7 +323,7 @@ Post-merge smoke:
 ### Residuals (post-merge)
 
 - **0 unsuppressed alerts** in the Trivy CI image-mode gate
-  (unchanged from v3.10.13-22; Trivy's image scan didn't see the
+  (unchanged from v3.10.13-21; Trivy's image scan didn't see the
   mongod CVE and apparently doesn't surface the `/usr/share/java/`
   CVEs either -- see the `/usr/share/java/` Trivy gap note below).
 - **0 SBOM-scan findings via `trivy sbom image.spdx.json`** for
@@ -360,14 +360,17 @@ If a follow-on PR adds Grype to CI, the `.trivyignore`-equivalent
 for the three Grype-only findings above (the 4.2.25 stepper
 residual + two false positives) becomes part of that work.
 
-### Sequencing note
+### Relationship to the Phase 6 Guava audit work
 
-This release assumes `v3.10.13-22` (the Phase 6 Guava reachability
-audit + suppressions) ships first.  If the v3.10.13-22 PR is held,
-this entry should be renumbered to v3.10.13-22 before merge.  Both
-PRs are independent in their changes; the only coupling is the
-CHANGELOG version numbering and the cross-references in this entry
-to v3.10.13-22.
+The Phase 6 Guava reachability audit (originally drafted as
+`v3.10.13-22` on a separate `phase-6-guava-reachability-audit`
+branch, not yet pushed) is independent of this PR's changes and
+will ship later as `v3.10.13-23` or higher when prioritised.  The
+Grype-vs-Trivy investigation that surfaced both the MongoDB CVE
+and the seven `/usr/share/java/` CVEs documented in this entry
+happened during the same session as the Phase 6 work, which is
+why the audit-script-and-`.trivyignore`-suppressions PR and this
+MongoDB-plus-apt-prune PR carry overlapping discovery narratives.
 
 ---
 

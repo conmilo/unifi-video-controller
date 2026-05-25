@@ -305,7 +305,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # unifi-video .deb's hard-coded Depends: line resolves; the stub is a
 # zero-file metapackage, the real JRE is Canonical's openjdk-21-jre-headless.
 #
-# Phase 3.2 follow-up (v3.10.13-24): these four lib*-java packages drag in
+# Phase 3.2 follow-up (v3.10.13-22): these four lib*-java packages drag in
 # a heavy transitive dependency chain via libjaxb-java -> libistack-commons-
 # java -> ant + ant-optional + libdom4j-java + libplexus-archiver-java +
 # libmaven3-core-java + libwagon-http-java + the libcommons-{io,compress,
@@ -320,7 +320,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # commons-collections.jar + jettison-1.1.jar) and ZERO JAXB JARs, so we
 # need the apt packages as the source for the install -m 400 step lower
 # in the runtime stage that copies the modern JARs into /usr/lib/unifi-
-# video/lib/.  The strategy adopted in v3.10.13-24: install + copy + purge,
+# video/lib/.  The strategy adopted in v3.10.13-22: install + copy + purge,
 # all done in the apt-install-time tax once.  The purge step lives at the
 # END of the .deb-extract + JAR-install RUN block (search for 'Phase 3.2
 # purge' below) and removes the four lib*-java packages plus their
@@ -775,7 +775,7 @@ RUN set -eux; \
     # Cleanup tmp scratch. \
     rm -rf /tmp/*.jar; \
     \
-    # Phase 3.2 purge (v3.10.13-24): now that the JAXB / activation / istack \
+    # Phase 3.2 purge (v3.10.13-22): now that the JAXB / activation / istack \
     # / stax / txw2 / jettison / commons-collections3 JARs have been COPIED \
     # into /usr/lib/unifi-video/lib/ (where airvision's MANIFEST.MF Class- \
     # Path: resolves them), the four lib*-java apt packages -- and the heavy \
