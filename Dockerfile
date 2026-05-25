@@ -159,6 +159,11 @@ ARG OPENSSL11_LIBS_VERSION=1.1.1zg-1.amzn2.0.1
 # CLI binary + headers) since we don't ship the CLI or headers in our
 # runtime image.  yum verifies the package's RSA/SHA512 signature against
 # Amazon's embedded GPG key before installing.
+#
+# DL3033: the version IS pinned (via OPENSSL11_LIBS_VERSION ARG defaulting
+# to 1.1.1zg-1.amzn2.0.1) but hadolint's static analyser doesn't expand
+# ARGs when checking the yum install line.
+# hadolint ignore=DL3033
 RUN yum install -y openssl11-libs-${OPENSSL11_LIBS_VERSION} && \
     yum clean all && \
     rm -rf /var/cache/yum
@@ -302,10 +307,15 @@ RUN apt-get update && \
 COPY --from=libssl11-source /usr/lib64/libssl.so.1.1.1zg    /usr/local/lib/libssl.so.1.1
 COPY --from=libssl11-source /usr/lib64/libcrypto.so.1.1.1zg /usr/local/lib/libcrypto.so.1.1
 COPY --from=libssl11-source /openssl11-libs-version.txt     /opt/openssl11-libs-version.txt
+# Validate the COPYed libs are present + findable via the dynamic loader.
+# A grep over `ldconfig -p` output would require -o pipefail (DL4006);
+# we redirect to a temp file instead so the grep failure mode is clear.
 RUN ldconfig && \
     test -f /usr/local/lib/libssl.so.1.1 && \
     test -f /usr/local/lib/libcrypto.so.1.1 && \
-    ldconfig -p | grep -E 'lib(ssl|crypto)\.so\.1\.1' && \
+    ldconfig -p > /tmp/ldconfig.dump && \
+    grep -qE 'lib(ssl|crypto)\.so\.1\.1' /tmp/ldconfig.dump && \
+    rm /tmp/ldconfig.dump && \
     echo "openssl11-libs version: $(cat /opt/openssl11-libs-version.txt)"
 
 # -------- Equivs stubs for openjdk-8-jre-headless + mongodb-server ---------
