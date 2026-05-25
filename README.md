@@ -45,7 +45,7 @@ Both upstream authors are credited in `CHANGELOG.md` and `LICENSE`.
 | BouncyCastle | 1.60 (`jdk15on` family, .deb-bundled) | 1.84 (`jdk18on` from Maven Central; closes 7 CVEs across `bcprov` + `bcpkix` -- CVE-2026-5588, CVE-2025-8916, CVE-2024-30171/29857, CVE-2023-33202, CVE-2020-26939/15522; same drop AWS SDK v2 and Apache Tomcat 11 GA bundle).  `bcprov-ext` retired (discontinued by upstream at 1.78.1; airvision uses only standard NIST P-256/P-384 + RSA which all live in main `bcprov`).  `bctls` retired (airvision registers `BouncyCastleProvider` only -- not `BouncyCastleJsseProvider` -- and JDK 21's native JSSE handles the :7443/:7442 connectors per Phase 3.4).  `bcutil-jdk18on` added as the transitive dep BC moved out of `bcprov` in 1.71+.  Phase 5 (v3.10.13-19). |
 | Init | `runit` (phusion baseimage) | `tini` PID 1 |
 | Supply chain | Untracked downloads | Every third-party artifact (MongoDB tarballs, UniFi Video deb, log4j/jackson/Maven Central JARs) SHA256-pinned in `checksums/SHA256SUMS` and verified before the runtime stage is built; `libssl.so.1.1` + `libcrypto.so.1.1` come from an image-digest-pinned Amazon Linux 2 stage with RPM GPG verification |
-| Distribution | Build locally | `ghcr.io/conmilo/unifi-video-controller:<tag>` + GitHub Release `.tar.zst` / `.tar.gz` |
+| Distribution | Docker Hub: [`pducharme/unifi-video-controller`](https://hub.docker.com/r/pducharme/unifi-video-controller) | `ghcr.io/conmilo/unifi-video-controller:<tag>` + GitHub Release `image.tar.gz` |
 | CI | None | hadolint + buildx + Trivy on every PR; weekly base-image rebuild verification; monthly auto-release of date-stamped rebuilds |
 | Updates | None | Dependabot watches the Ubuntu base digest and all GitHub Actions versions |
 
@@ -104,8 +104,8 @@ web UI is at `https://<host>:7443/`.
 
 ### Synology DSM (Container Manager)
 
-Each tagged release attaches a `.tar.gz` and `.tar.zst` of the image to
-the GitHub Release. The reliable, GUI-only path on DSM is:
+Each tagged release attaches `image.tar.gz` of the image to the GitHub
+Release. The simplest GUI-only first-install path is:
 
 1. Download `image.tar.gz` from the latest release to your PC:
    ```
@@ -116,10 +116,16 @@ the GitHub Release. The reliable, GUI-only path on DSM is:
    select the uploaded `image.tar.gz`.
 
 DSM's **Add From URL** does *not* accept HTTPS file URLs, and adding
-GHCR as a custom registry fails DSM's connectivity test because GHCR
-doesn't implement the catalog endpoint -- see
+`https://ghcr.io` directly as a custom registry fails DSM's
+connectivity test (GHCR doesn't implement the `/v2/_catalog` endpoint
+DSM probes).  If you want recurring GUI-based updates from GHCR
+without the file-import round-trip, run a tiny `registry:2`
+pull-through cache on the NAS and add *that* as the custom registry
+-- DSM's Container Manager flows then work end to end.  See
+[docs/MIGRATION.md §3 Method C](docs/MIGRATION.md#c-ghcr-pull-through-cache-gui-only-recurring-updates)
+for the step-by-step, and
 [docs/MIGRATION.md §3.1](docs/MIGRATION.md#31-dsm-gotchas-paths-that-look-obvious-but-dont-work)
-for the full explanation and alternatives (SSH + `docker pull`, etc.).
+for the gotchas this avoids.
 
 See [docs/MIGRATION.md](docs/MIGRATION.md) for the full DSM swap procedure
 including the mandatory pre-swap snapshot.

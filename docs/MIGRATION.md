@@ -77,11 +77,12 @@ nuisance).
 
 ## 3. Obtain the new image
 
-Pick whichever fits your setup. **Method A is the recommended path for
-DSM 7.3** because it's GUI-only and avoids two Container Manager quirks
+Pick whichever fits your setup. **Method A** is the simplest GUI-only
+first-install path; **Method C** is the best fit if you want recurring
+GUI-based updates from GHCR. Both avoid the Container Manager quirks
 documented in §3.1.
 
-### A. Download + import via Container Manager GUI (recommended)
+### A. Download + import via Container Manager GUI (simplest first install)
 
 1. On your PC, download `image.tar.gz` from the latest release:
    `https://github.com/conmilo/unifi-video-controller/releases/latest/download/image.tar.gz`
@@ -93,41 +94,110 @@ documented in §3.1.
    **Import**).
 4. Browse to the uploaded `image.tar.gz` -> **Open**. DSM loads it in
    ~1-2 minutes.
-5. The image `ghcr.io/conmilo/unifi-video-controller:v3.10.13-1` now
+5. The image `ghcr.io/conmilo/unifi-video-controller:latest` now
    appears in the Image list.
 
 If your Container Manager rejects the `.tar.gz` ("unsupported file
 format" -- happens on older builds), decompress to plain `.tar` first
 with 7-Zip on Windows or `gunzip` on the NAS, then import the `.tar`.
 
-### B. GHCR pull via SSH (no PC -> NAS round-trip)
+### B. GHCR pull via SSH (one-shot, no PC -> NAS round-trip)
 
-Fastest if you don't mind enabling SSH; the NAS pulls the ~870 MB image
-directly from GHCR over its own internet link.
+Fastest one-off path if you don't mind enabling SSH; the NAS pulls the
+~870 MB image directly from GHCR over its own internet link.
 
 1. DSM -> Control Panel -> Terminal & SNMP -> enable **SSH service**.
 2. From your PC:
    ```bash
    ssh admin@<nas-ip>
-   sudo docker pull ghcr.io/conmilo/unifi-video-controller:v3.10.13-1
+   sudo docker pull ghcr.io/conmilo/unifi-video-controller:latest
    ```
 3. Disable SSH again in Control Panel (good hygiene).
 4. Image now visible under Container Manager -> Image.
 
-### C. SSH + `.tar.zst` (smallest transfer)
+### C. GHCR pull-through cache (GUI-only, recurring updates)
 
-`image.tar.zst` is ~10% smaller than the `.tar.gz` but DSM's GUI doesn't
-recognise it. Use this only if you're already SSH'd in and care about
-the saved megabytes:
+Best fit if you want to use Container Manager's GUI flows for both the
+initial install *and* future updates. You run a small `registry:2`
+container on the NAS that proxies + caches GHCR; DSM treats your proxy
+as a regular custom registry. This bypasses §3.1's `Add custom
+registry -> https://ghcr.io` failure because your proxy *does*
+implement `/v2/_catalog` (returning the locally-cached set), so DSM's
+connectivity test passes.
 
-1. Download `image.tar.zst` to your workstation.
-2. `scp image.tar.zst admin@<nas-ip>:/volume1/docker/`
-3. On the NAS:
+1. **Install `registry:2`.** Container Manager -> **Registry** ->
+   search `registry` (publisher: Library) -> **Download** the `2`
+   tag.  File Station: create `/volume1/docker/registry-proxy/data/`.
+   Container Manager -> **Container** -> **Create** -> image
+   `registry:2`:
+   - **Network**: bridge.
+   - **Port settings**: local port `5555` -> container port `5000` ->
+     TCP.  (DSM itself listens on host port 5000 for its web UI --
+     pick any free port other than 5000-5001.)
+   - **Volume settings**: `/volume1/docker/registry-proxy/data` ->
+     `/var/lib/registry`.
+   - **Environment**:
+     - `REGISTRY_PROXY_REMOTEURL` = `https://ghcr.io`
+     - (Private images only): `REGISTRY_PROXY_USERNAME` = your GitHub
+       login; `REGISTRY_PROXY_PASSWORD` = a classic PAT with
+       `read:packages` scope.  Fine-grained PATs do not currently
+       work for GHCR docker auth.
+   - Enable auto-restart.  Start the container.
+
+2. **Give the proxy a DNS-style name.**  DSM's "Add Registry" URL
+   field validates against a domain-style regex and rejects
+   `http://localhost:5555` and `http://127.0.0.1:5555`.  Enable SSH
+   once (Control Panel -> Terminal & SNMP) and:
    ```bash
-   ssh admin@<nas-ip>
-   sudo docker load -i <(zstd -d -c /volume1/docker/image.tar.zst)
-   rm /volume1/docker/image.tar.zst
+   sudo sh -c 'grep -q "ghcr-proxy.lan" /etc/hosts \
+     || echo "127.0.0.1 ghcr-proxy.lan" >> /etc/hosts'
+   sudo ping -c 1 -W 2 ghcr-proxy.lan
    ```
+   The ping should reply from `127.0.0.1`.  DSM rebuilds `/etc/hosts`
+   on boot, so make it persistent via Control Panel -> Task Scheduler
+   -> **Create** -> **Triggered Task** -> **User-defined script**,
+   User `root`, Event *Boot-up*, command:
+   ```bash
+   grep -q "ghcr-proxy.lan" /etc/hosts \
+     || echo "127.0.0.1 ghcr-proxy.lan" >> /etc/hosts
+   ```
+   Disable SSH again -- the boot task runs as root regardless.
+
+3. **Confirm the proxy responds.**
+   ```bash
+   wget -qO- http://ghcr-proxy.lan:5555/v2/
+   ```
+   Should return `{}` -- that's `registry:2`'s "API alive" response
+   and is the same probe Container Manager runs.
+
+4. **Add the registry to Container Manager.**  Container Manager ->
+   **Registry** -> **Settings** -> **Add**.  Name `ghcr-proxy`,
+   URL `http://ghcr-proxy.lan:5555`, no authentication.
+   Connectivity test passes.
+
+5. **First pull populates the cache.**  Container Manager -> **Image**
+   -> **Add** -> **Add From URL**, paste:
+   ```
+   ghcr-proxy.lan:5555/conmilo/unifi-video-controller:latest
+   ```
+   DSM resolves `ghcr-proxy.lan` to `127.0.0.1`, hits your `registry:2`
+   container, which fetches from `ghcr.io` and caches blobs to
+   `/var/lib/registry`.  Image appears under DSM's Image list once
+   complete (~3-5 min on a typical home internet link).  Subsequent
+   pulls and other LAN hosts hit the cache.
+
+The pull-through cache starts empty (returns `{"repositories":[]}`
+from `/v2/_catalog`) -- it only contains what has passed through it.
+Every image reference you use through the proxy must spell
+`ghcr-proxy.lan:5555/` in place of `ghcr.io/`; docker treats the two
+as distinct registries and won't share local layers between them.
+
+**Cache maintenance.**  Blobs are kept indefinitely.  Easiest cleanup
+is to stop the container, `sudo rm -rf /volume1/docker/registry-proxy/data/*`,
+restart -- the next pull repopulates.  For proper garbage collection
+set `REGISTRY_STORAGE_DELETE_ENABLED=true` and run
+`docker exec registry-proxy registry garbage-collect /etc/docker/registry/config.yml`
+periodically.
 
 ### 3.1 DSM gotchas (paths that look obvious but don't work)
 
@@ -142,16 +212,17 @@ Manager but won't -- documented so you don't waste time on them:
   not an HTTPS link to a file. Pasting the registry reference itself
   works on some Container Manager versions and fails on others -- if
   you want to try, paste exactly
-  `ghcr.io/conmilo/unifi-video-controller:v3.10.13-1` (no `https://`,
-  no path). If that fails, fall back to Method A.
+  `ghcr.io/conmilo/unifi-video-controller:latest` (no `https://`,
+  no path). If that fails, fall back to Method A or Method C.
 
-- **Registry tab -> Settings -> Add custom registry** pointed at
-  `https://ghcr.io`. DSM's connectivity test calls the registry's
-  `/v2/_catalog` endpoint, which GHCR deliberately does not implement
-  (GHCR images are pullable but not browseable). DSM reports
-  `Unable to connect to the registry` even though `docker pull` against
-  the same hostname works fine. There is no DSM-side workaround --
-  use Method B (SSH pull) or Method A (file import) instead.
+- **Registry tab -> Settings -> Add custom registry** pointed
+  directly at `https://ghcr.io`. DSM's connectivity test calls the
+  registry's `/v2/_catalog` endpoint, which GHCR deliberately does
+  not implement (GHCR images are pullable but not browseable). DSM
+  reports `Unable to connect to the registry` even though
+  `docker pull` against the same hostname works fine.  The fix is
+  to point DSM at a local `registry:2` pull-through cache that
+  *does* implement `/v2/_catalog` -- see **Method C** above.
 
 ---
 
@@ -178,9 +249,12 @@ manual edits.
 1. Open the `.json` you exported in §2 in any text editor.
 2. Change the `image` field:
    ```json
-   "image" : "ghcr.io/conmilo/unifi-video-controller:v3.10.13-2"
+   "image" : "ghcr.io/conmilo/unifi-video-controller:latest"
    ```
    (was something like `pducharme/unifi-video-controller:latest`).
+   If you installed the image via Method C (pull-through cache),
+   substitute the proxy reference instead, e.g.
+   `ghcr-proxy.lan:5555/conmilo/unifi-video-controller:latest`.
 3. Change the `id` field to any unique 64-char lowercase hex string
    that doesn't collide with an existing container's ID. Easiest
    options:
@@ -199,9 +273,9 @@ manual edits.
    **Import** -> upload the edited JSON.
 7. The wizard walks you through the imported settings -- accept all
    of them. The image field should already show
-   `ghcr.io/conmilo/unifi-video-controller:v3.10.13-2`. Confirm the
-   volume mounts, port mappings (all 11), and environment variables
-   are intact.
+   `ghcr.io/conmilo/unifi-video-controller:latest` (or your Method C
+   proxy reference). Confirm the volume mounts, port mappings (all
+   11), and environment variables are intact.
 8. Finish the wizard, but **do not start yet** -- §6 has the migration
    log you need to watch.
 
@@ -209,8 +283,9 @@ manual edits.
 
 If for some reason §2 didn't produce a usable JSON, you can also do
 this from scratch via **Container** -> **Create** -> picking
-`ghcr.io/conmilo/unifi-video-controller:v3.10.13-2` and filling in
-the wizard by hand. You'll need to re-enter:
+`ghcr.io/conmilo/unifi-video-controller:latest` (or your Method C
+proxy reference) and filling in the wizard by hand. You'll need to
+re-enter:
 
 - Volume bind mounts (`/var/lib/unifi-video` and any `videos` override).
 - All 11 port mappings (TCP 1935, 6666, 7080, 7442, 7443, 7444, 7445,
