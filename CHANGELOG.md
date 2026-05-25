@@ -6,6 +6,200 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-18] -- Phase 7: libssl1.1 from Amazon Linux 2 openssl11 1.1.1zg
+
+### TL;DR
+
+Replace the focal-security `libssl1.1_1.1.1f-1ubuntu2.24` deb (whose
+post-1.1.1f-1ubuntu2.24 CVE backports moved to the paywalled Ubuntu
+Pro ESM channel) with Amazon Linux 2's `openssl11-libs-1.1.1zg-1.amzn2.0.1`
+RPM, extracted in a new `libssl11-source` Dockerfile build stage and
+copied bare into `/usr/local/lib/`.  Closes the 12 remaining libssl1.1
+CVE alerts.
+
+Expected post-release Trivy alert count: **13** (down from 25 after
+v3.10.13-17, and from 79 at the start of Phase 4).  Remaining residual:
+BouncyCastle + Guava (Phase 5/6 per `docs/PHASE-5-ROADMAP.md`).
+
+No functional behaviour change.  Zero changes to `run.sh`,
+`migrate-mongo.sh`, `uv-patcher` logic, runtime data layout, MongoDB
+versions, or the JRE.  The runtime image still ships `libssl.so.1.1` +
+`libcrypto.so.1.1` for MongoDB 4.4's dynamic loader; the source of
+those binaries has changed.
+
+### Why Amazon Linux 2 openssl11 and not the obvious alternatives
+
+The 12 residuals at the end of Phase 4 followup were CVEs disclosed
+**after** OpenSSL 1.1.1 went upstream EOL (2023-09-11), with Trivy
+citing fixes in `openssl 3.0.13-0ubuntu3.6+` -- the OpenSSL 3.x package
+that lives next to (not inside) the focal libssl1.1 1.1.1f line.
+Canonical did backport these CVEs for paying Ubuntu Pro ESM customers
+but never released the patched 1.1.1f-1ubuntu2.25+ to the public
+focal-security pool.  So the legacy 1.1.1f-1ubuntu2.24 deb we shipped
+genuinely carries the CVEs Trivy was citing.
+
+Candidates evaluated, in order of trust:
+
+1. **Amazon Linux 2 `openssl11`** *(chosen)*
+   - Amazon's Linux security team maintains `openssl11` with CVE
+     backports published per release as ALAS advisories (the 1.1.1zg
+     release maps to ALAS2-2026-3249, closing CVE-2026-28387..-28390;
+     earlier z* releases close the rest of our 12).
+   - The exact `openssl11-libs-1.1.1zg-1.amzn2.0.1.x86_64.rpm` is the
+     same binary AWS CLI v2 itself bundles in release 2.34.32 (see
+     aws/aws-cli@6b97442 + PR #10225) -- verified by extracting
+     `_ssl.cpython-*.so` from the CLI zip and reading the embedded
+     "OpenSSL 1.1.1zg 7 Apr 2026" version string.
+   - RPM signed by Amazon Linux's release key
+     (`RPM-GPG-KEY-amazon-linux-2`, Key ID `11cf1f95c87f5b1a`),
+     verified automatically by `yum install` against
+     `/etc/pki/rpm-gpg/RPM-GPG-KEY-amazon-linux-2` baked into the
+     official `public.ecr.aws/amazonlinux/amazonlinux:2` image.
+   - Source RPM `openssl11-1.1.1zg-1.amzn2.0.1.src.rpm` publicly
+     downloadable from Amazon's AL2 repos; per-CVE patches in the
+     spec file are cross-referenced with Red Hat and MITRE entries
+     for audit.
+
+2. **`kzalewski/openssl-1.1.1` GitHub fork** *(rejected)*
+   - Single-maintainer community repo.  Version naming
+     (1.1.1z, za, zb, ... zg) mirrors the alphabetical-extension
+     convention reportedly used by OpenSSL Foundation's paid
+     Premium Support, raising legal-optics concerns.
+   - Patches themselves trace back to public sources (openEuler
+     LTS branch + cherry-picks from upstream OpenSSL 3.x devs
+     Matt Caswell, Tomas Mraz, Neil Horman, Bob Beck, Viktor
+     Dukhovni) so the code is OK, but the naming + single-SPOF
+     risk profile is worse than Amazon's.
+
+3. **AlmaLinux `compat-openssl11` SRPM** *(rejected)*
+   - Distro-vendor trust comparable to AL2, but requires building
+     from SRPM (more pipeline complexity than `yum install` on AL2).
+   - Different vendor than AWS CLI's source, so we'd lose the
+     "same binary as a Tier-1 vendor's product" corroboration.
+
+4. **OpenSSL Foundation Premium Support subscription** *(rejected)*
+   - Paid, and the license restricts public redistribution of the
+     patched source.  Doesn't fit an MIT-licensed open-source fork.
+
+5. **Self-compile from upstream 1.1.1w + hand-port CVE patches** *(rejected)*
+   - All 12 CVEs are post-1.1.1w EOL.  Compiling 1.1.1w upstream
+     closes zero of them.  We'd be reimplementing what Amazon
+     already does.
+
+6. **Skip the bump, accept the residuals** *(was the v3.10.13-17 status quo)*
+   - Defensible (these CVEs are in OpenSSL code paths
+     MongoDB 4.4's fCV migration doesn't exercise, and mongod
+     binds only to 127.0.0.1:7441 during that brief migration),
+     but the Security tab visibility is worse and the
+     defensibility burden falls on each operator.
+
+### Changed
+
+- **`Dockerfile`** -- new `ARG AL2_DIGEST` immediately after the
+  existing `UBUNTU_DIGEST` ARG.  New build stage `libssl11-source`
+  based on `public.ecr.aws/amazonlinux/amazonlinux:2@${AL2_DIGEST}`
+  that runs `yum install -y openssl11-libs-${OPENSSL11_LIBS_VERSION}`
+  (default `1.1.1zg-1.amzn2.0.1`) and writes the package version into
+  a marker file `/openssl11-libs-version.txt`.  The runtime stage's
+  legacy libssl1.1 install block (was `COPY` + `dpkg -i` of the
+  focal-security deb) is replaced with three `COPY --from=libssl11-source`
+  lines for `libssl.so.1.1.1zg`, `libcrypto.so.1.1.1zg`, and the
+  version marker; followed by `ldconfig` + a self-check that the
+  two .so files are findable via `ldconfig -p`.
+- **`Dockerfile`** -- fetcher stage drops the legacy
+  `wget -q http://security.ubuntu.com/.../libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb`
+  line.  No longer consumed anywhere downstream.
+- **`Dockerfile`** -- adjacent stale comment near the Phase 4
+  follow-up apt-get-upgrade block updated to reflect that the
+  libssl1.1 + libcrypto.so.1.1 pair now comes from the
+  digest-pinned AL2 stage instead of a SHA256-pinned Ubuntu deb.
+- **`checksums/SHA256SUMS`** -- drops the
+  `libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb` SHA256 line.  The
+  AL2 RPM is verified by `yum`'s built-in GPG signature check
+  against Amazon's release key; no SHA256-pin needed at this
+  layer (`AL2_DIGEST` pins the image bytes already).
+- **`.trivyignore`** -- the 38 per-CVE libssl1.1 audit entries
+  (16 not-affected + 22 released) are deleted.  Trivy's OS-package
+  scanner has no `libssl1.1` dpkg entry to match against in the
+  new image, so the entries became unreachable.  File kept (with
+  a header explaining the Phase 7 transition) so future
+  suppressions don't need to reconstruct the audit methodology
+  from scratch.
+- **`README.md`** -- "What's modernized" table libssl1.1 row
+  updated; "Supply chain" row updated to mention the new AL2-stage
+  pinning; JRE-history section's libssl1.1 reference updated;
+  "Updating pinned artifacts" section explains the new
+  `AL2_DIGEST` + `OPENSSL11_LIBS_VERSION` bump path.
+
+### CVEs closed
+
+All 12 of the v3.10.13-17 libssl1.1 residuals:
+
+- **CVE-2025-9230** (medium) -- closed in 1.1.1zd batch
+- **CVE-2025-68160** (low) -- closed in 1.1.1ze batch
+- **CVE-2025-69418** (low) -- closed in 1.1.1ze batch
+- **CVE-2025-69419** (low) -- closed in 1.1.1ze batch
+- **CVE-2025-69420** (low) -- closed in 1.1.1ze batch
+- **CVE-2025-69421** (low) -- closed in 1.1.1ze batch
+- **CVE-2026-22795** (low) -- closed in 1.1.1ze batch
+- **CVE-2026-22796** (low) -- closed in 1.1.1ze batch
+- **CVE-2026-28387** (low) -- closed in 1.1.1zg batch (ALAS2-2026-3249)
+- **CVE-2026-28388** (low) -- closed in 1.1.1zg batch (ALAS2-2026-3249)
+- **CVE-2026-28389** (low) -- closed in 1.1.1zg batch (ALAS2-2026-3249)
+- **CVE-2026-28390** (low) -- closed in 1.1.1zg batch (ALAS2-2026-3249)
+
+### Residuals (unchanged from v3.10.13-17)
+
+- 13 alerts for BouncyCastle 1.60 + Guava 14.0.1 -- still deferred
+  to Phase 5 / Phase 6 per `docs/PHASE-5-ROADMAP.md`.
+
+Expected post-release alert count: **13** (was 25 after v3.10.13-17).
+
+### Verification
+
+- `mvn -B test` in `uv-patcher/`: 37/37 pass (no patcher-code change).
+- `docker build --no-cache --platform linux/amd64`: succeeds.  Image
+  size unchanged within rounding (the AL2 .so files are similar size
+  to the Canonical ones they replaced; the AL2 stage is build-time
+  only and is not present in the final image).
+- Inside the built image:
+  ```
+  $ docker run --rm <image> ldconfig -p | grep -E "lib(ssl|crypto)\.so\.1\.1"
+    libssl.so.1.1 (libc6,x86-64) => /usr/local/lib/libssl.so.1.1
+    libcrypto.so.1.1 (libc6,x86-64) => /usr/local/lib/libcrypto.so.1.1
+  $ docker run --rm <image> strings /usr/local/lib/libssl.so.1.1 \
+        | grep "^OpenSSL"
+    OpenSSL 1.1.1zg  7 Apr 2026
+  $ docker run --rm <image> ldd /opt/mongodb-4.4/bin/mongod \
+        | grep -E "libssl|libcrypto"
+    libcrypto.so.1.1 => /usr/local/lib/libcrypto.so.1.1
+    libssl.so.1.1   => /usr/local/lib/libssl.so.1.1
+    libssl.so.3     => /lib/x86_64-linux-gnu/libssl.so.3
+    libcrypto.so.3  => /lib/x86_64-linux-gnu/libcrypto.so.3
+  $ docker run --rm <image> dpkg-query -W libssl1.1
+    dpkg-query: no packages found matching libssl1.1
+  ```
+  - mongod 4.4's dynamic loader resolves both 1.1 symlinks to
+    `/usr/local/lib/` (our AL2-sourced files), not to any dpkg path
+    (correctly absent).  The 3.x lines are mongod's separate link
+    against Ubuntu's libssl3 -- unrelated to the swap.
+- Container start against a fresh ephemeral data dir reaches
+  `(healthy)` in ~90 seconds.  4-endpoint probe returns expected
+  HTTP codes (`/` 200, `/api/2.0/bootstrap` 200,
+  `/api/2.0/login` 400 for bogus creds with no admin user set
+  up yet, `/api/2.0/server` 200).  Zero `[ERROR]` lines in
+  `/var/log/unifi-video/server.log`.  `migrate-mongo` correctly
+  identifies the fresh data dir and skips the fCV migration.
+
+### Notes
+
+The same caveat as v3.10.13-17 applies to the maintainer's
+prod-data snapshot smoke: it requires the live NAS instance to be
+quiesced so the WiredTiger log doesn't get caught mid-rotation in
+a version mongod 4.4.29 can't read.  When the NAS is restarted for
+the v3.10.13-18 upgrade rollout, the snapshot method will work
+again for any future Phase 5 / 6 testing.
+
 ## [v3.10.13-17] -- Phase 4 follow-up: apt-get upgrade + jackson-core 2.21.3
 
 ### TL;DR

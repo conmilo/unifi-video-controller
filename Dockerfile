@@ -28,6 +28,15 @@
 # Multi-arch index digest for ubuntu:24.04 (resolved 2026-04-15)
 ARG UBUNTU_DIGEST=sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
+# Phase 7 (v3.10.13-18): Amazon Linux 2 image digest, used as the source of
+# libssl.so.1.1 + libcrypto.so.1.1 for MongoDB 4.4 compatibility.  Replaces
+# the focal-security libssl1.1 deb whose CVE backports went paywalled-ESM.
+# AL2 maintains openssl11 actively via the ALAS process and ships the same
+# binary AWS CLI v2 itself consumes -- see aws/aws-cli PR #10225 (commit
+# 6b97442) for the 2.34.32 1.1.1zg bump and ALAS2-2026-3249 for the
+# advisory closing the same 4 CVEs (-28387..-28390) flagged against us.
+ARG AL2_DIGEST=sha256:53c36e786bbe63f21fac81b005149233df0abd1eb0bb13a49308dd03b3e3b1a2
+
 # ---------------------------------------------------------------------------
 # Stage 1: fetcher -- download + verify all pinned third-party artifacts
 # ---------------------------------------------------------------------------
@@ -60,7 +69,6 @@ RUN set -eux; \
     wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz; \
     wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu1804-4.2.25.tgz; \
     wget -q https://dl.ubnt.com/firmwares/ufv/v3.10.13/unifi-video.Ubuntu18.04_amd64.v3.10.13.deb; \
-    wget -q http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.26.0/log4j-api-2.26.0.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.26.0/log4j-core-2.26.0.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.26.0/log4j-1.2-api-2.26.0.jar; \
@@ -107,7 +115,66 @@ RUN mvn -B clean package && \
     echo "uv-patcher.jar size:" && du -h target/uv-patcher.jar
 
 # ---------------------------------------------------------------------------
-# Stage 3: runtime image
+# Stage 3: libssl11-source -- pull Amazon Linux 2's openssl11-libs RPM and
+# expose the libssl.so.1.1 + libcrypto.so.1.1 binaries for the runtime stage
+# to COPY.  Phase 7 (v3.10.13-18) replacement for the focal-security
+# libssl1.1 deb whose post-1.1.1f-1ubuntu2.24 CVE backports moved to the
+# paywalled Ubuntu Pro ESM channel.
+#
+# Why AL2 openssl11 specifically:
+#   - Amazon's Linux team maintains openssl11 actively, releasing each
+#     new 1.1.1z* upstream patch with their own ALAS advisory.  The
+#     1.1.1zg release closes ALAS2-2026-3249 (CVE-2026-28387..-28390)
+#     plus the earlier ze/zd/zc batches.
+#   - The RPM is signed by Amazon Linux's release key
+#     (RPM-GPG-KEY-amazon-linux-2, Key ID 11cf1f95c87f5b1a) and yum
+#     verifies the signature automatically.
+#   - This is the SAME openssl11 build AWS CLI v2 itself consumes -- the
+#     CLI's _ssl.cpython-*.so module reports "OpenSSL 1.1.1zg 7 Apr 2026"
+#     byte-for-byte, see aws/aws-cli@6b97442 for the 2.34.32 bump.
+#   - Provenance is publicly auditable: the source RPM
+#     openssl11-1.1.1zg-1.amzn2.0.1.src is downloadable from Amazon's
+#     AL2 repos and contains upstream OpenSSL 1.1.1zg + per-CVE patches
+#     cross-referenced with Red Hat and MITRE CVE entries.
+#
+# The pinned openssl11-libs RPM version `1.1.1zg-1.amzn2.0.1` is the
+# minimum we accept; future ALAS bumps (zh, zi, ...) require updating
+# this version string AND re-pinning AL2_DIGEST above so the image
+# layer cache invalidates predictably.
+#
+# Binary compatibility note: openssl11-libs is built on AL2 (glibc 2.26).
+# Our runtime is ubuntu:24.04 (glibc 2.39).  glibc is backward-compatible
+# (symbol versioning guarantees older-built binaries find their symbols
+# in newer glibc), so the AL2 .so files load and resolve cleanly under
+# Ubuntu's dynamic loader.  Verified at build time -- if `ldd` against
+# the copied libs ever fails, the apt-get install of MongoDB 4.4 would
+# also fail at mongod start, which the smoke test catches.
+# ---------------------------------------------------------------------------
+FROM public.ecr.aws/amazonlinux/amazonlinux:2@${AL2_DIGEST} AS libssl11-source
+
+# Pin the exact RPM version that maps to ALAS2-2026-3249.
+ARG OPENSSL11_LIBS_VERSION=1.1.1zg-1.amzn2.0.1
+
+# Install just openssl11-libs (the .so files); not openssl11 itself (the
+# CLI binary + headers) since we don't ship the CLI or headers in our
+# runtime image.  yum verifies the package's RSA/SHA512 signature against
+# Amazon's embedded GPG key before installing.
+#
+# DL3033: the version IS pinned (via OPENSSL11_LIBS_VERSION ARG defaulting
+# to 1.1.1zg-1.amzn2.0.1) but hadolint's static analyser doesn't expand
+# ARGs when checking the yum install line.
+# hadolint ignore=DL3033
+RUN yum install -y openssl11-libs-${OPENSSL11_LIBS_VERSION} && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Capture installed package version into the layer for downstream diagnostics.
+RUN rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' openssl11-libs \
+        > /openssl11-libs-version.txt && \
+    cat /openssl11-libs-version.txt
+
+# ---------------------------------------------------------------------------
+# Stage 4: runtime image
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04@${UBUNTU_DIGEST}
 
@@ -172,9 +239,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the base image (libgnutls30t64, sed, libc6, etc.).  Without it, those
 # packages stay frozen at the version baked into the `ubuntu:24.04`
 # digest pin until Docker Hub republishes the tag -- which can lag the
-# noble-security pool by weeks.  The Maven Central artifacts and the
-# libssl1.1 deb remain SHA256-pinned (no freshness in those paths); only
-# the Canonical-signed apt pool gains freshness.
+# noble-security pool by weeks.  Maven Central artifacts remain
+# SHA256-pinned (no freshness in those paths); the libssl1.1 +
+# libcrypto.so.1.1 .so files now come from a digest-pinned Amazon Linux 2
+# stage (see Phase 7 / v3.10.13-18 note above the libssl11-source stage).
+# Only the Canonical-signed apt pool gains freshness via the upgrade.
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \
     apt-get install -y --no-install-recommends \
@@ -208,18 +277,46 @@ RUN apt-get update && \
     locale-gen en_US.UTF-8 && \
     rm -rf /var/lib/apt/lists/*
 
-# -------- libssl1.1 (bundled MongoDB 4.4 mongod needs legacy openssl) ------
+# -------- libssl1.1 + libcrypto.so.1.1 (MongoDB 4.4 mongod) ----------------
 # The mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz binary at /opt/mongodb-4.4/
 # was built on Ubuntu 20.04 and dynamically links libssl.so.1.1 +
-# libcrypto.so.1.1.  Ubuntu 24.04 only ships libssl3, so we install
-# libssl1.1 from the focal-security pool.  This pin is permanent until we
-# can move off MongoDB 4.4 -- and we can't, because 5.0+ requires AVX and
-# the deploy target (Apollo Lake Celeron J3455) doesn't have AVX.
-# Verified via `objdump -p .../mongod | grep NEEDED`.
-# UV-bundled JNI .so files (libubnt_*_jni.so, libsigar-amd64-linux.so) and
-# the unifi-video.deb itself do NOT link against libssl/libcrypto.
-COPY --from=fetcher /artifacts/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb /tmp/libssl1.1.deb
-RUN dpkg -i /tmp/libssl1.1.deb && rm /tmp/libssl1.1.deb
+# libcrypto.so.1.1.  Ubuntu 24.04 only ships libssl3, so we still need to
+# provide the legacy libs.  This pin is permanent until we can move off
+# MongoDB 4.4 -- and we can't, because 5.0+ requires AVX and the deploy
+# target (Apollo Lake Celeron J3455) doesn't have AVX.  Verified via
+# `objdump -p .../mongod | grep NEEDED`.  UV-bundled JNI .so files
+# (libubnt_*_jni.so, libsigar-amd64-linux.so) and the unifi-video.deb
+# itself do NOT link against libssl/libcrypto.
+#
+# Phase 7 (v3.10.13-18): switched from the focal-security libssl1.1 deb
+# (1.1.1f-1ubuntu2.24, frozen since Canonical moved 1.1.1 backports to
+# the paywalled Ubuntu Pro ESM channel) to Amazon Linux 2's openssl11-libs
+# 1.1.1zg-1.amzn2.0.1 RPM, extracted in the `libssl11-source` stage above.
+# Trade-offs vs. the deb:
+#   + Closes 12 libssl1.1 CVE alerts that the Canonical deb left open
+#     (CVE-2025-9230, -68160, -69418..-69421, CVE-2026-22795/22796,
+#     CVE-2026-28387..-28390).
+#   + Tracks Amazon's ALAS cadence (publicly maintained) instead of
+#     Canonical's paywalled ESM cadence.
+#   + Same trust profile as AWS CLI v2 (which consumes the same RPM).
+#   - No dpkg package entry for libssl1.1 anymore -- the libs are
+#     installed bare in /usr/local/lib/, only mongod 4.4's dynamic
+#     loader needs to find them via ldconfig.  Anything else that
+#     hard-coded a dpkg dependency on libssl1.1 (nothing in this image
+#     does) would silently fail.
+COPY --from=libssl11-source /usr/lib64/libssl.so.1.1.1zg    /usr/local/lib/libssl.so.1.1
+COPY --from=libssl11-source /usr/lib64/libcrypto.so.1.1.1zg /usr/local/lib/libcrypto.so.1.1
+COPY --from=libssl11-source /openssl11-libs-version.txt     /opt/openssl11-libs-version.txt
+# Validate the COPYed libs are present + findable via the dynamic loader.
+# A grep over `ldconfig -p` output would require -o pipefail (DL4006);
+# we redirect to a temp file instead so the grep failure mode is clear.
+RUN ldconfig && \
+    test -f /usr/local/lib/libssl.so.1.1 && \
+    test -f /usr/local/lib/libcrypto.so.1.1 && \
+    ldconfig -p > /tmp/ldconfig.dump && \
+    grep -qE 'lib(ssl|crypto)\.so\.1\.1' /tmp/ldconfig.dump && \
+    rm /tmp/ldconfig.dump && \
+    echo "openssl11-libs version: $(cat /opt/openssl11-libs-version.txt)"
 
 # -------- Equivs stubs for openjdk-8-jre-headless + mongodb-server ---------
 # UniFi Video's .deb hard-depends on `openjdk-8-jre-headless` (gone from

@@ -30,5 +30,10 @@ ignored:
 trustedRegistries:
   - docker.io
   - ghcr.io
+  # Phase 7 (v3.10.13-18): added for the `libssl11-source` build stage that
+  # pulls Amazon Linux 2 from Amazon's own ECR Public registry to extract
+  # the openssl11-libs binaries.  AWS publishes signed image manifests
+  # there; the runtime stage still uses docker.io/ubuntu.
+  - public.ecr.aws
 
 failure-threshold: warning

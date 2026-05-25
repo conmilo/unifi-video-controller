@@ -40,10 +40,10 @@ Both upstream authors are credited in `CHANGELOG.md` and `LICENSE`.
 | Base image | `phusion/baseimage:0.11` (Ubuntu 18.04, EOL 2023) | `ubuntu:24.04` LTS pinned by digest |
 | JRE | Ubuntu's `openjdk-8-jre-headless=8u162-b12-1` (frozen 2018) | Canonical OpenJDK 21 LTS (apt-installed) + uv-patcher runtime tool that rewrites `airvision.jar`'s spec-illegal identifiers at container start (see [Security § JRE history](#jre-history)). Earlier releases (v3.10.13-4 .. -12) pinned AdoptOpenJDK 8u265-b01; the pin was retired in v3.10.13-13. |
 | MongoDB | 4.0.x from MongoDB's deprecated bionic apt repo | 4.4.29 runtime + 4.2.25 fCV stepper |
-| libssl1.1 | (implicit in base) | Pinned `1.1.1f-1ubuntu2.24` from focal-security |
+| libssl1.1 | (implicit in base) | `openssl11-libs-1.1.1zg-1.amzn2.0.1` from Amazon Linux 2 ([ALAS2-2026-3249](https://alas.aws.amazon.com/AL2/ALAS2-2026-3249.html)); same build AWS CLI v2 itself ships.  Phase 7 (v3.10.13-18) switched from the focal-security 1.1.1f deb whose post-1.1.1f-1ubuntu2.24 CVE backports went paywalled-ESM-only |
 | log4j | 2.17.0 | 2.26.0 (Maven Central; closes CVE-2021-44832 + the Phase 4 set of CVE-2025-68161 / CVE-2026-34477 / -34479 / -34480.  Phase 3.1 sourced 2.19.0 from apt's `liblog4j2-java`; Phase 4 reverted to Maven Central because apt's package is pinned at 2.19.0 in BOTH noble and resolute.) |
 | Init | `runit` (phusion baseimage) | `tini` PID 1 |
-| Supply chain | Untracked downloads | All 6 third-party artifacts SHA256-pinned in `checksums/SHA256SUMS` and verified before the runtime stage is built |
+| Supply chain | Untracked downloads | Every third-party artifact (MongoDB tarballs, UniFi Video deb, log4j/jackson/Maven Central JARs) SHA256-pinned in `checksums/SHA256SUMS` and verified before the runtime stage is built; `libssl.so.1.1` + `libcrypto.so.1.1` come from an image-digest-pinned Amazon Linux 2 stage with RPM GPG verification |
 | Distribution | Build locally | `ghcr.io/conmilo/unifi-video-controller:<tag>` + GitHub Release `.tar.zst` / `.tar.gz` |
 | CI | None | hadolint + buildx + Trivy on every PR; weekly base-image rebuild verification; monthly auto-release of date-stamped rebuilds |
 | Updates | None | Dependabot watches the Ubuntu base digest and all GitHub Actions versions |
@@ -200,10 +200,14 @@ docker inspect --format '{{ index .RepoDigests 0 }}' ubuntu:24.04
 
 ### Updating pinned artifacts
 
-If a manually-fetched artifact (MongoDB, libssl1.1, UniFi Video deb,
+If a manually-fetched artifact (MongoDB, UniFi Video deb,
 log4j-slf4j-impl, etc.) changes, update the URL in `Dockerfile` and the
 corresponding line in `checksums/SHA256SUMS`. The CI build will
-reject anything that doesn't match.  Most JVM-side libraries (the JRE
+reject anything that doesn't match.  The `libssl.so.1.1` + `libcrypto.so.1.1`
+pair has a separate pin via the `AL2_DIGEST` ARG and the
+`OPENSSL11_LIBS_VERSION` build arg in the `libssl11-source` stage;
+bumping these requires verifying against the latest ALAS advisory at
+`alas.aws.amazon.com/alas2.html`.  Most JVM-side libraries (the JRE
 itself, log4j 2.x, commons-collections, jettison, JAXB) come from
 apt now -- Dependabot watches the noble apt repo and bumps in lockstep
 with Canonical's security pool.  Bumping across LTS major versions
@@ -285,8 +289,10 @@ current LTS, sourced from apt's `openjdk-21-jre-headless` so the JRE
 flows through the same Canonical security-update pipeline as the rest
 of the OS packages (LTS support aligned with Ubuntu 24.04's window
 to Apr 2029).  Monthly rebuilds now advance the JRE within the 21 LTS
-line automatically via apt, the same way they advance the Ubuntu base
-and libssl1.1.
+line automatically via apt, the same way they advance the Ubuntu base.
+The `libssl.so.1.1` + `libcrypto.so.1.1` pair is bumped via Dependabot
+watching the Amazon Linux 2 image digest + manual `OPENSSL11_LIBS_VERSION`
+refresh against the latest ALAS advisory.
 
 The same `uv-patcher` pass ALSO handles airvision's two dangling
 Tomcat 9 Bootstrap call sites.  Tomcat 9 reduced
