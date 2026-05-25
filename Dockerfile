@@ -9,7 +9,7 @@
 #          container start.  This unblocked the move off the AdoptOpenJDK
 #          8u265-b01 pin that v3.10.13-4 required.  See README.md "JRE
 #          history" for the empirical backstory.
-# MongoDB: 4.4.x runtime DB (default 4.4.29; tunable via ARG MONGO44_VERSION)
+# MongoDB: 4.4.x runtime DB (default 4.4.30; tunable via ARG MONGO44_VERSION)
 #          + 4.2.x mongod-only fCV stepper (default 4.2.25, ~71 MB on disk;
 #            tunable via ARG MONGO42_VERSION; see mongo42-extractor stage).
 #          The 4.4 major-version ceiling is intentional and dual-anchored:
@@ -46,14 +46,14 @@ ARG UBUNTU_DIGEST=sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194
 ARG AL2_DIGEST=sha256:53c36e786bbe63f21fac81b005149233df0abd1eb0bb13a49308dd03b3e3b1a2
 
 # MongoDB tarball version pins.  Tunable at build time, e.g.:
-#   docker buildx build --build-arg MONGO44_VERSION=4.4.30 ...
+#   docker buildx build --build-arg MONGO44_VERSION=4.4.29 ...
 # Each value is tied to a matching SHA256 entry in checksums/SHA256SUMS,
 # so bumping a value here without regenerating SHA256SUMS will fail the
 # fetcher's checksum verification -- the right failure mode for an
 # unverified binary.  The 4.4 major-version ceiling is intentional; see
 # the header comment above for the dual-constraint rationale (driver +
 # AVX) that blocks MongoDB 5.0+.
-ARG MONGO44_VERSION=4.4.29
+ARG MONGO44_VERSION=4.4.30
 ARG MONGO42_VERSION=4.2.25
 
 # ---------------------------------------------------------------------------

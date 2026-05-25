@@ -6,6 +6,217 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-23] -- bump MongoDB 4.4 runtime from 4.4.29 to 4.4.30 (closes CVE-2025-14847)
+
+### TL;DR
+
+Bump the runtime MongoDB tarball from 4.4.29 to 4.4.30, closing
+**CVE-2025-14847 (HIGH)**: "Mismatched length fields in Zlib
+compressed protocol headers may allow a read of uninitialized heap
+memory by an unauthenticated [attacker]".  The fix landed in
+MongoDB 4.4.30 (and 5.0.32 for the 5.0 line we don't ship); see
+[MongoDB security advisory](https://www.mongodb.com/community/forums/c/announcements/security-advisories)
+for the upstream vendor's bulletin.
+
+**Zero behavioural change** beyond the version bump.  Same wire
+protocol, same WiredTiger storage format, same fCV semantics --
+4.4.29 -> 4.4.30 is a routine point release within the same major.
+
+The v3.10.13-20 `ARG MONGO44_VERSION` parameterisation was built
+exactly for this kind of one-line CVE bump: change the default,
+re-pin the SHA256, ship.
+
+### How this was discovered
+
+This CVE is a poster child for why Trivy alone leaves blind spots
+that a layered scanner setup catches.  The investigation chain:
+
+1. The runtime mongod binary at `/opt/mongodb-4.4/bin/mongod` is
+   extracted from a `.tgz` tarball and copied bare into the image.
+   It carries no dpkg / rpm metadata, so Trivy's OS-package scanner
+   doesn't catalogue it at all.  This was visible as
+   `trivy rootfs <mongod>` returning 0 results -- same blind spot
+   shape as the Phase 7 libssl1.1 `.so` files.
+
+2. The image SBOM (BuildKit syft, attached as attestation) DOES
+   catalogue mongod via its binary cataloguer -- it reads the
+   `db version v4.4.29` string from the ELF and emits
+   `pkg:generic/mongodb@4.4.29`.  But Trivy's CVE matcher doesn't
+   query its CVE DBs for `pkg:generic/*` PURLs (only ecosystem-
+   specific ones like `pkg:deb/...`, `pkg:rpm/...`, `pkg:maven/...`),
+   so the SBOM entry is listed-but-unsearched.
+
+3. **Grype 0.112.0** (Anchore's vulnerability matcher, same syft
+   data source) **does** match `pkg:generic/mongodb@4.4.29` against
+   its CVE DB and surfaced CVE-2025-14847 with a clear `Fix:
+   ['4.4.30', '5.0.32']` directive.
+
+   The fix path is concretely actionable -- 4.4.30 exists at
+   fastdl.mongodb.org (HTTP 200 verified) and is the last release
+   before 4.4 EOL'd in Feb 2024.
+
+The same Grype run also surfaced two MongoDB findings that ARE
+false positives:
+
+- **CVE-2017-2665 [HIGH] unfixed** -- describes "skyring-setup"
+  writing a plaintext MongoDB password in Red Hat Storage Console /
+  Satellite 6.  Not a MongoDB Inc. vulnerability; a Red Hat product
+  integration issue.  Grype matches it via overly-broad version
+  range.
+- **CVE-2014-8180 [MEDIUM] unfixed** -- same Red Hat Satellite 6
+  integration class; not a MongoDB Inc. CVE.
+
+Both are noted here so the next maintainer doesn't chase
+unactionable findings when running Grype.
+
+### What about the 4.2.25 fCV stepper?
+
+`/opt/mongodb-4.2/bin/mongod` (the fCV stepper used once by
+`migrate-mongo.sh` during the 4.0 -> 4.2 -> 4.4 featureCompatibility
+bridge) is affected by the same CVE class.  However:
+
+- MongoDB 4.2 EOL'd April 2023, predating the public disclosure
+  cycle that produced CVE-2025-14847.  No 4.2.x fix was ever
+  published.
+- The fCV stepper runs for ~5 seconds total during initial database
+  migration, binds to a localhost-only socket, and exits before any
+  external network is reachable.  CVE-2025-14847 requires an
+  unauthenticated attacker to reach the wire protocol; the threat
+  model doesn't intersect our usage.
+- A future MongoDB 4.4 startup against a 4.0 dataset still needs
+  the 4.2 stepper to bridge the fCV gap.  Removing the stepper
+  would break that path.
+
+Verdict: 4.2.25 stays.  Documented residual; not gated.  Grype will
+continue to flag the 4.2.25 instance of CVE-2025-14847 -- expected
+and accepted.
+
+### Why not switch to the MongoDB apt repo?
+
+Investigated as part of this work.  MongoDB Inc. publishes
+`mongodb-org` apt repos at `https://repo.mongodb.org/apt/ubuntu`,
+which would give us dpkg metadata that Trivy can scan.  But:
+
+| Distro | mongodb-org 4.4 repo |
+|---|---|
+| focal (20.04) | published; 4.4.21 .. 4.4.30 available |
+| jammy (22.04) | published |
+| **noble (24.04)** | **NOT PUBLISHED (HTTP 404)** -- MongoDB Inc. never released 4.4.x packages for Ubuntu 24.04 |
+
+Switching would require either downgrading the base image from
+`ubuntu:24.04` to `ubuntu:22.04` (losing Ubuntu 24.04's LTS
+security pool, supported through 2029) or pulling the focal/jammy
+repo against noble (libc / libssl mismatch, unsupported).  Neither
+is worth the marginal SBOM coverage win, especially when MongoDB
+4.4 is EOL and no new CVEs are being filed against the line
+anyway.
+
+We stay on the `.tgz` tarball path.  The 4.4.30 bump above is the
+same artifact source, just a different version pin.
+
+### Files changed
+
+- **`Dockerfile`**:
+  - Header comment line 12: `default 4.4.29` -> `default 4.4.30`.
+  - `ARG MONGO44_VERSION=4.4.29` -> `ARG MONGO44_VERSION=4.4.30` at
+    the top-level ARG block.
+  - Example comment line 49: `--build-arg MONGO44_VERSION=4.4.30`
+    -> `--build-arg MONGO44_VERSION=4.4.29` (rotated so the example
+    still demonstrates a real overridable target -- 4.4.29 stays
+    downloadable from fastdl.mongodb.org indefinitely as a back-
+    catalogue release).
+- **`checksums/SHA256SUMS`**: drop the 4.4.29 line, add
+  `a2bf4c4db59fa4ad0b629fb598a3ff13257f71af82967ebcb49db7f0441131ca
+  mongodb-linux-x86_64-ubuntu2004-4.4.30.tgz`.  Computed locally
+  from the downloaded tarball; the fetcher stage re-verifies on
+  every build.
+- **`mongodb-server-equivs.control`**: `Version: 4.4.29` ->
+  `4.4.30` plus the `Provides:` line's two `(= 4.4.29)` instances
+  -> `(= 4.4.30)`.  The equivs-built stub package satisfies the
+  unifi-video.deb's `mongodb-server | mongodb-org-server |
+  mongodb-10gen` dependency without dpkg ever seeing the actual
+  binary; the version field should still match what we ship.
+- **`README.md`**: comparison table cell `4.4.29 runtime + 4.2.25
+  fCV stepper` -> `4.4.30 runtime + 4.2.25 fCV stepper`.
+
+### Files NOT changed (intentionally)
+
+- **MongoDB 4.2.25 (`MONGO42_VERSION` ARG)**: stays at 4.2.25.  No
+  4.2.x fix exists for CVE-2025-14847 (EOL since April 2023); the
+  stepper's threat model doesn't intersect the CVE's exploit
+  preconditions.  Documented residual above.
+- **`mongo-java-driver-2.14.2.jar`** (inside `airvision.jar`): not
+  affected.  CVE-2025-14847 is a server-side network-layer issue
+  in mongod's Zlib decompression path; the driver doesn't expose
+  the vulnerable surface.  The driver itself has zero CVEs in
+  Trivy / Grype / NVD against 2.14.2 (Phase 6 reachability audit
+  context applies: the driver is EOL but its public attack surface
+  is closed).
+- **Historical CHANGELOG entries**: kept verbatim referencing
+  4.4.29.  Those describe what was true at their respective
+  release; rewriting history would obscure the timeline.
+
+### Verification
+
+Pre-merge sanity:
+
+- `curl -sIo /dev/null -w "%{http_code}\n" https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2004-4.4.30.tgz`
+  -> `200`.
+- Local SHA256 of the downloaded tarball matches the new SHA256SUMS
+  entry (`a2bf4c4db59fa4ad0b629fb598a3ff13257f71af82967ebcb49db7f0441131ca`).
+- `hadolint Dockerfile`: clean (no regressions; same exemptions as
+  v3.10.13-20).
+- `docker buildx build --load`: TBD by maintainer; the fetcher
+  stage will fail loudly if the SHA256 entry is wrong (the right
+  failure mode for an unverified binary).
+
+Post-merge smoke:
+
+- `mongod --version` inside the runtime image should report
+  `v4.4.30`.
+- `migrate-mongo.sh` against an existing UV dataset: the 4.0 ->
+  4.2 -> 4.4 fCV bridge still works (the 4.2.25 stepper is
+  unchanged; only the 4.4 destination major changed by a patch
+  level).
+- Grype rescan against the published image SBOM: CVE-2025-14847
+  should no longer match the 4.4.x binary entry; the 4.2.25
+  finding remains as a documented residual.
+
+### Residuals (post-merge)
+
+- **0 unsuppressed alerts** in the Trivy CI gate (no change from
+  v3.10.13-22 -- Trivy didn't see this CVE in the first place
+  because it can't see mongod).
+- **Grype residuals** if Grype is added to CI in a future PR:
+  - `CVE-2025-14847` on the 4.2.25 stepper -- documented residual,
+    documented threat-model exception above.
+  - `CVE-2017-2665` (HIGH) and `CVE-2014-8180` (MEDIUM) on both
+    4.2.25 and 4.4.30 -- false positives (Red Hat Satellite 6
+    skyring integration, not MongoDB Inc.).  Would need explicit
+    suppression with citation.
+
+### Why two scanners (foreshadowing)
+
+This CVE escaping Trivy + appearing only via Grype is the
+motivation for an eventual two-scanner CI setup
+(Trivy for Java + apt packages where it excels; Grype for binary-
+catalogued artifacts where syft's binary scanners produce
+`pkg:generic/*` entries).  Not implemented in this PR -- staying
+scoped to the CVE-driven version bump that justifies the release
+on its own.
+
+If a follow-on PR adds Grype to CI, the `.trivyignore`-equivalent
+for the three Grype-only findings above (the 4.2.25 stepper
+residual + two false positives) becomes part of that work.
+
+### Sequencing note
+
+This release assumes `v3.10.13-22` (the Phase 6 Guava reachability
+audit + suppressions) ships first.  If the v3.10.13-22 PR is held,
+this entry should be renumbered to v3.10.13-22 before merge.
+
+---
+
 ## [v3.10.13-21] -- complete the GHCR manifest-annotations fix that v3.10.13-20 started
 
 ### TL;DR
