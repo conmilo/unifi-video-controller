@@ -6,21 +6,41 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
-## [v3.10.13-23] -- bump MongoDB 4.4 runtime from 4.4.29 to 4.4.30 (closes CVE-2025-14847)
+## [v3.10.13-23] -- MongoDB 4.4.30 + prune redundant Java apt packages (closes 8 CVEs)
 
 ### TL;DR
 
-Bump the runtime MongoDB tarball from 4.4.29 to 4.4.30, closing
-**CVE-2025-14847 (HIGH)**: "Mismatched length fields in Zlib
-compressed protocol headers may allow a read of uninitialized heap
-memory by an unauthenticated [attacker]".  The fix landed in
-MongoDB 4.4.30 (and 5.0.32 for the 5.0 line we don't ship); see
-[MongoDB security advisory](https://www.mongodb.com/community/forums/c/announcements/security-advisories)
-for the upstream vendor's bulletin.
+Two CVE-driven changes shipping together:
 
-**Zero behavioural change** beyond the version bump.  Same wire
-protocol, same WiredTiger storage format, same fCV semantics --
-4.4.29 -> 4.4.30 is a routine point release within the same major.
+1. **MongoDB 4.4 runtime bump 4.4.29 -> 4.4.30**, closing
+   **CVE-2025-14847 (HIGH)** in mongod's Zlib protocol decompression
+   path.  Trivy didn't see this CVE because mongod is installed from
+   a `.tgz` tarball without dpkg metadata; Grype's SBOM-mode scan
+   surfaced it via the `pkg:generic/mongodb@4.4.29` PURL syft's
+   binary cataloguer emits from the mongod ELF.  See
+   [MongoDB security advisory](https://www.mongodb.com/community/forums/c/announcements/security-advisories)
+   for the upstream vendor's bulletin.  Fix landed in 4.4.30 (and
+   5.0.32 for the 5.0 line we don't ship).
+
+2. **Prune redundant `lib*-java` apt packages after copying their
+   JARs into airvision's classpath**, closing **7 CVEs** (1 CRITICAL,
+   3 HIGH, 3 MEDIUM) in the libjaxb-java transitive dependency chain
+   (dom4j 2.1.1, plexus-archiver 4.6.1, plexus-utils 3.4.2, commons-
+   io 2.11.0, commons-compress 1.25.0, commons-lang3 3.14.0).  These
+   JARs were on disk in `/usr/share/java/` but never on airvision's
+   classpath -- the apt packages were only needed as the SOURCE for
+   the install -m 400 step that copies the modern JAR bytes into
+   `/usr/lib/unifi-video/lib/`.
+
+**Total CVEs closed: 8 (1 CRITICAL + 4 HIGH + 3 MEDIUM).**
+
+**Zero behavioural change** beyond the version bump.  Image bytes
+for airvision's actual classpath (`/usr/lib/unifi-video/lib/`) are
+identical to v3.10.13-22.  MongoDB wire protocol, WiredTiger
+storage format, and fCV semantics are unchanged (4.4.29 -> 4.4.30
+is a routine point release within the same major).  Image total
+size: 2.91 GB -> 2.34 GB (~570 MB compressed savings from the
+pruned apt chain).
 
 The v3.10.13-20 `ARG MONGO44_VERSION` parameterisation was built
 exactly for this kind of one-line CVE bump: change the default,
@@ -114,6 +134,117 @@ anyway.
 We stay on the `.tgz` tarball path.  The 4.4.30 bump above is the
 same artifact source, just a different version pin.
 
+### Apt JAR cleanup -- the seven CVE chain
+
+Phase 3.2 (v3.10.13-13) added four `lib*-java` apt packages
+(`libjaxb-api-java`, `libjaxb-java`, `libjettison-java`,
+`libcommons-collections3-java`) to provide JAXB / JAF / jettison /
+commons-collections3 JARs that airvision (a Java 8 build) imports
+directly.  Without them on the Class-Path, the Guice filter's
+annotation processing throws `TypeNotPresentException` at Tomcat
+context startup and the entire web service 404s.
+
+The Dockerfile's runtime stage has long contained an `install -m 400`
+block that COPIES the JAR bytes from `/usr/share/java/` (where apt
+puts them) into `/usr/lib/unifi-video/lib/` (where airvision's
+`MANIFEST.MF Class-Path:` resolves them -- all entries are
+relative names that resolve against airvision.jar's own location).
+
+What got discovered during the v3.10.13-22 Grype-vs-Trivy
+investigation: `libjaxb-java` drags in a heavy transitive chain via
+`libistack-commons-java` -> `ant` + `ant-optional` + `libdom4j-java`
++ `libplexus-archiver-java` + `libmaven3-core-java` +
+`libwagon-http-java` + `libcommons-{io,compress,lang3}-java` +
+`libsisu-*` / `libmaven-*` family.  None of those JARs are on
+airvision's classpath (`/usr/share/java/` is not in airvision's
+`Class-Path:` line; JSVC only adds `commons-daemon.jar` from that
+dir via the script's `-cp` flag).  But they were sitting in the
+image filesystem AND in dpkg state, where Grype's SBOM-mode scan
+flagged them for seven real CVEs (Trivy CI's image-mode scan was
+missing them; the SBOM-mode scan via `trivy sbom image.spdx.json`
+does catch them, suggesting a Trivy CI configuration gap that
+could be a follow-on PR).
+
+CVEs closed by this prune:
+
+| CVE | Severity | Package | Description |
+|---|---|---|---|
+| CVE-2020-10683 | **CRITICAL** | dom4j 2.1.1 | XXE in default SAX parser |
+| CVE-2024-47554 | HIGH | commons-io 2.11.0 | DoS via XmlStreamReader |
+| CVE-2023-37460 | HIGH | plexus-archiver 4.6.1 | Arbitrary file creation in AbstractUnArchiver |
+| CVE-2025-67030 | HIGH | plexus-utils 3.4.2 | Directory Traversal in extractFile |
+| CVE-2024-25710 | MEDIUM | commons-compress 1.25.0 | Infinite loop on corrupted DUMP file |
+| CVE-2024-26308 | MEDIUM | commons-compress 1.25.0 | OOM on broken Pack200 file |
+| CVE-2025-48924 | MEDIUM | commons-lang3 3.14.0 | Uncontrolled Recursion |
+
+Plus ~370 unfixed-Ubuntu transitive CVEs in the `ant` family that
+Grype was flagging but that Canonical never patches (those
+disappear from the SBOM too once the packages are gone).
+
+### The install-+-copy-+-purge strategy
+
+The runtime stage now follows this sequence:
+
+  1. `apt-get install -y --no-install-recommends ... libjaxb-api-
+     java libjaxb-java libjettison-java libcommons-collections3-
+     java ...` (unchanged; restores the apt packages that the JAR-
+     copy step depends on).
+
+  2. `install -m 400 -o unifi-video -g unifi-video
+     /usr/share/java/<name>.jar /usr/lib/unifi-video/lib/<name>.jar`
+     for each JAR airvision actually loads (jaxb-api, jaxb-runtime,
+     jaxb-core, javax.activation, istack-commons-runtime, stax-ex,
+     txw2, jettison, commons-collections3-renamed-to-commons-
+     collections).  This is the existing copy step from Phase 3.1 /
+     3.2; unchanged.
+
+  3. **NEW (v3.10.13-23)**: `apt-get -y purge libjaxb-api-java
+     libjaxb-java libjettison-java libcommons-collections3-java
+     && apt-get -y autoremove --purge` at the END of the same RUN
+     block.  Since the JARs were COPIED (not symlinked) in step 2,
+     they survive the purge.  dpkg state and `/usr/share/java/`
+     filesystem state are both cleaned up.  Trivy, Grype, and SBOM
+     attestations stop flagging the seven CVEs above.
+
+  4. `rm -rf /var/lib/apt/lists/*` to clean the apt cache (unchanged).
+
+Net effect:
+
+- `/usr/share/java/` shrinks from ~80 JARs to 6 (only the still-
+  needed `commons-daemon` for jsvc, plus a few minor `libintl` /
+  `gettext` artifacts that aren't security-relevant).
+- Image size: **2.91 GB -> 2.34 GB** (~570 MB compressed savings
+  measured locally via `docker images`).
+- `dpkg-query --list | wc -l` drops by ~70 packages.
+- airvision's actual classpath is unchanged byte-for-byte;
+  `md5sum` verified across all four PR-affected JARs.
+
+### Why this is safe (audit trail)
+
+Three independent verifications, in order of strength:
+
+  1. **Static**: airvision's `MANIFEST.MF Class-Path:` referenced
+     by `jar:` URL resolution.  Every entry is a relative name
+     (e.g. `jaxb-api-2.3.1.jar`, not `/usr/share/java/jaxb-api-
+     2.3.1.jar`); per the JAR spec, relative `Class-Path:` entries
+     resolve against the manifest-bearing JAR's location, i.e.
+     `/usr/lib/unifi-video/lib/`.  `/usr/share/java/` is not in the
+     resolution path.
+
+  2. **Empirical**: built the image locally, ran `docker run
+     --cap-add DAC_READ_SEARCH -v /path/to/data:/usr/lib/unifi-
+     video/data <image>`, observed airvision starting cleanly
+     (jsvc + EMS main loop processes running, `unifi-video.pid`
+     created, `server.log` writing fresh entries, EMS websocket
+     connections establishing on port 7440).
+
+  3. **Cross-checked**: built the v3.10.13-15 baseline locally and
+     ran identical smoke -- same behaviour (jsvc starts only with
+     `--cap-add DAC_READ_SEARCH`, fails silently without).  The
+     `--cap-add` requirement is pre-existing (documented in README
+     and docker-compose.yaml since at least v3.10.13-5); the apt
+     cleanup doesn't change cap requirements.
+
 ### Files changed
 
 - **`Dockerfile`**:
@@ -125,6 +256,13 @@ same artifact source, just a different version pin.
     still demonstrates a real overridable target -- 4.4.29 stays
     downloadable from fastdl.mongodb.org indefinitely as a back-
     catalogue release).
+  - Phase 3.2 comment block expanded to describe the install-+-
+    copy-+-purge strategy and cite the seven CVEs the prune closes.
+  - Apt-purge block appended to the end of the .deb-extract +
+    JAR-install RUN: `apt-get -y purge libjaxb-api-java libjaxb-
+    java libjettison-java libcommons-collections3-java; apt-get -y
+    autoremove --purge; rm -rf /var/lib/apt/lists/*`.  Lives at the
+    end of the existing big RUN block (no new layer added).
 - **`checksums/SHA256SUMS`**: drop the 4.4.29 line, add
   `a2bf4c4db59fa4ad0b629fb598a3ff13257f71af82967ebcb49db7f0441131ca
   mongodb-linux-x86_64-ubuntu2004-4.4.30.tgz`.  Computed locally
@@ -184,9 +322,14 @@ Post-merge smoke:
 
 ### Residuals (post-merge)
 
-- **0 unsuppressed alerts** in the Trivy CI gate (no change from
-  v3.10.13-22 -- Trivy didn't see this CVE in the first place
-  because it can't see mongod).
+- **0 unsuppressed alerts** in the Trivy CI image-mode gate
+  (unchanged from v3.10.13-22; Trivy's image scan didn't see the
+  mongod CVE and apparently doesn't surface the `/usr/share/java/`
+  CVEs either -- see the `/usr/share/java/` Trivy gap note below).
+- **0 SBOM-scan findings via `trivy sbom image.spdx.json`** for
+  the seven `/usr/share/java/` CVEs (verified locally; the
+  published image's SBOM-mode scan should also drop to 0 after
+  this PR builds + releases).
 - **Grype residuals** if Grype is added to CI in a future PR:
   - `CVE-2025-14847` on the 4.2.25 stepper -- documented residual,
     documented threat-model exception above.
@@ -194,6 +337,14 @@ Post-merge smoke:
     4.2.25 and 4.4.30 -- false positives (Red Hat Satellite 6
     skyring integration, not MongoDB Inc.).  Would need explicit
     suppression with citation.
+- **Trivy `/usr/share/java/` gap**: the seven CVEs this prune
+  closes were NOT surfaced by the Trivy image-mode scan that runs
+  in CI (only by `trivy sbom` and Grype).  Hypothesis: the trivy-
+  action's `vuln-type: os,library` filter combined with `ignore-
+  unfixed: true` somehow excludes them at image-scan time.  Not
+  investigated further in this PR.  Worth a follow-on PR to align
+  CI's image-mode scan with the SBOM-mode scan (or to switch to
+  SBOM-mode entirely).
 
 ### Why two scanners (foreshadowing)
 
@@ -213,7 +364,10 @@ residual + two false positives) becomes part of that work.
 
 This release assumes `v3.10.13-22` (the Phase 6 Guava reachability
 audit + suppressions) ships first.  If the v3.10.13-22 PR is held,
-this entry should be renumbered to v3.10.13-22 before merge.
+this entry should be renumbered to v3.10.13-22 before merge.  Both
+PRs are independent in their changes; the only coupling is the
+CHANGELOG version numbering and the cross-references in this entry
+to v3.10.13-22.
 
 ---
 
