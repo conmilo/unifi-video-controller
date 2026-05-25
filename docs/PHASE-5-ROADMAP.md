@@ -1,7 +1,13 @@
 # Phase 5 roadmap: BouncyCastle + Guava (medium-CVE residuals)
 
-> **Status (2026-05-24):** assessment only.  No implementation in this doc;
-> Phase 4 (`v3.10.13-16`) closed the low-risk medium/low CVE sweep and
+> **Status (2026-05-25):** Phase 5 SHIPPED in `v3.10.13-19` -- see
+> CHANGELOG entry for what landed.  Bumped to **1.84** (not the 1.78.1
+> originally scoped here; 1.84 was the current latest at PR time).
+> `bcprov-ext` and `bctls` were retired entirely rather than bumped
+> (rationale in CHANGELOG).  Phase 6 (Guava + Guice) remains open.
+>
+> **Original status (2026-05-24):** assessment only.  Phase 4
+> (`v3.10.13-16`) closed the low-risk medium/low CVE sweep and
 > deferred these two JAR families because their bump cost is materially
 > higher than the rest.  This document scopes the work for whoever picks
 > up Phase 5 / Phase 6.

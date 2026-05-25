@@ -6,6 +6,227 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-19] -- Phase 5: BouncyCastle 1.60 -> 1.84 (jdk15on -> jdk18on)
+
+### TL;DR
+
+Replace the .deb-bundled BouncyCastle 1.60 (`jdk15on` family) with
+BouncyCastle 1.84 (`jdk18on` family) from Maven Central, SHA256-pinned.
+Closes 10 Trivy alerts (7 distinct CVEs).  Expected post-release Trivy
+alert count: **3** (Guava 14 only; Phase 6 work).
+
+No functional behaviour change.  Zero changes to `run.sh`,
+`migrate-mongo.sh`, `uv-patcher` Java code (the spec JSON gains new
+entries; no rewriter logic changes), runtime data layout, MongoDB
+versions, or the JRE.
+
+### What changed at the artifact level
+
+| .deb-installed 1.60 | Image-installed 1.84 | Disposition |
+|---|---|---|
+| `bcprov-jdk15on-160.jar` | `bcprov-jdk18on-1.84.jar` | **Swap** (filename rename + version bump) |
+| `bcpkix-jdk15on-160.jar` | `bcpkix-jdk18on-1.84.jar` | **Swap** |
+| `bcprov-ext-jdk15on-160.jar` | (no replacement) | **Retire** -- discontinued upstream; not needed |
+| `bctls-jdk15on-160.jar` | (no replacement) | **Retire** -- never instantiated by airvision |
+| (none) | `bcutil-jdk18on-1.84.jar` | **Add** -- new transitive dep |
+
+The four 1.60 jars all ship in the upstream `unifi-video.deb` and are
+all referenced in `airvision.jar`'s `META-INF/MANIFEST.MF` Class-Path.
+After this release:
+
+- The three 1.84 jars get `install`'d into `/usr/lib/unifi-video/lib/`
+  by the Dockerfile, alongside the existing modernized JARs from earlier
+  phases (log4j, jackson, tomcat, etc.).
+- The four 1.60 jars get `rm`'d from `/usr/lib/unifi-video/lib/`
+  immediately after.
+- `uv-patcher`, at container start, rewrites `airvision.jar`'s
+  Class-Path:
+  - `bcprov-jdk15on-160.jar` -> `bcprov-jdk18on-1.84.jar`
+  - `bcpkix-jdk15on-160.jar` -> `bcpkix-jdk18on-1.84.jar`
+  - `bcprov-ext-jdk15on-160.jar` -> empty (token removed from list)
+  - `bctls-jdk15on-160.jar` -> empty (token removed from list)
+  - `bcutil-jdk18on-1.84.jar` appended (via `jarFilenameAdditions`)
+
+### Why 1.84 and not the Phase 5 roadmap's 1.78.1
+
+`docs/PHASE-5-ROADMAP.md` (written 2026-05-24) targeted 1.78.1 because
+that was the current latest at write time.  By 2026-05-25 (the day this
+PR opened), Maven Central had advanced through 1.79, 1.80, 1.80.2,
+1.81, 1.81.1, 1.82, 1.83, and 1.84 (released 2026-05-15).  Bumping
+straight to 1.84 closes everything 1.78.1 would close plus all
+subsequent CVE-fix releases; the cost is identical (same `wget` +
+same `install -m 400` + same patcher spec).
+
+AWS SDK v2 and Apache Tomcat 11 GA both consume `bcprov-jdk18on-1.84`,
+which gives a Tier-1 vendor corroboration on the trust profile.
+
+### Why retire `bcprov-ext` and `bctls` instead of bumping them
+
+**`bcprov-ext-jdk18on`**: upstream discontinued the artifact at 1.78.1
+(the 1.78.1 JAR is even a 404 on Maven Central -- the metadata lists
+it but the .jar file was never published; the last actually-available
+release is 1.78).  No 1.79 or later `bcprov-ext-jdk18on` exists.  The
+contents of `bcprov-ext` (additional EC curves like GOST, less-common
+Camellia/SEED variants) aren't used by airvision's BC surface (4
+flows total: self-signed cert generation, PEM read/write, PKCS#10 CSR,
+provider registration -- all use standard NIST P-256/P-384 or RSA which
+live in main `bcprov`).  Bumping to 1.78 just for `bcprov-ext` while
+the other artifacts go to 1.84 would create a mixed-version classpath
+which is asking for `LinkageError` between BC components.
+
+**`bctls-jdk15on-160.jar`**: BC's JSSE provider.  The Phase 5 roadmap
+(`docs/PHASE-5-ROADMAP.md` line 109-115) verified that airvision's
+`service/security/*` package init calls
+`Security.addProvider(new BouncyCastleProvider())` and **never**
+`Security.addProvider(new BouncyCastleJsseProvider())`.  After Phase 3.4
+(v3.10.13-14) rewrote the :7442 connector cipher list, both `:7443`
+and `:7442` use JDK 21's native JSSE; BC's JSSE classes were dead
+weight.  Keeping `bctls-1.60` on the classpath alongside `bcprov-1.84`
+would risk `LinkageError` if any code path ever instantiated a bctls
+class (the version skew between bctls's expectations of the bcprov API
+and bcprov's actual 1.84 API is significant -- multiple methods bctls
+calls were removed/renamed between 1.60 and 1.84).  Removing the file
++ stripping the manifest reference is the safer move.
+
+### Why add `bcutil-jdk18on-1.84.jar`
+
+BouncyCastle 1.71 (2022) reorganised its shared utility classes into a
+separate Maven artifact (`bcutil-jdk18on`).  Previously these classes
+lived inside `bcprov-jdk15on`.  The `bcpkix-jdk18on-1.84.pom` declares
+a hard dependency on `bcutil-jdk18on-1.84`.  Without it on
+`airvision.jar`'s Class-Path:
+
+- All four BC code paths still load class-by-class on demand
+- airvision boot succeeds (the BC provider registration only needs
+  `bcprov` classes which are on the path)
+- The first call to `X509v3CertificateBuilder` (self-signed cert
+  generation) or `PKCS10CertificationRequestBuilder` (CSR generation)
+  throws `NoClassDefFoundError: org/bouncycastle/util/...` when bcpkix
+  tries to resolve its bcutil dependencies
+
+So `bcutil-jdk18on-1.84.jar` is added to `jarFilenameAdditions` in
+`airvision-renames.json` (same mechanism Phase 3.2 used to add the
+JAXB + JAF runtime JARs that Java 11+ no longer ships in the JDK).
+
+### CVEs closed (7 distinct, 10 Trivy alerts)
+
+Per `docs/PHASE-5-ROADMAP.md` Phase 5 CVE inventory:
+
+- **CVE-2026-5588** (medium) -- `bcpkix-jdk15on` PKIX `CompositeVerifier`
+  accepts empty signature sequence as valid
+- **CVE-2025-8916** (medium) -- `bcpkix-jdk15on` DoS in some PKIX path
+- **CVE-2024-30171** (medium) -- `bcprov-jdk15on` timing variant of
+  Bleichenbacher (Marvin attack)
+- **CVE-2024-29857** (medium) -- `bcprov-jdk15on` EC F2m parameters DoS
+  in certificate import
+- **CVE-2023-33202** (medium) -- `bcprov-jdk15on` + `bcprov-ext-jdk15on`
+  OOM via crafted ASN.1 in `PEMParser`
+- **CVE-2020-26939** (medium) -- `bcprov-jdk15on` + `bcprov-ext-jdk15on`
+  side-channel on RSA decryption with `OAEPPadding`
+- **CVE-2020-15522** (medium) -- `bcprov-jdk15on` + `bcprov-ext-jdk15on`
+  timing issue within EC math library
+
+All 7 are fixed in BC 1.78+; 1.84 carries them all.
+
+### Residuals (unchanged from v3.10.13-18)
+
+- 3 alerts for Guava 14.0.1 -- still deferred to Phase 6 per
+  `docs/PHASE-5-ROADMAP.md` Phase 6 section.
+
+Expected post-release alert count: **3** (was 13 after v3.10.13-18,
+was 25 after v3.10.13-17, was 79 at the start of Phase 4).
+
+### Changed
+
+- **`Dockerfile`** -- fetcher stage adds three `wget` lines for the
+  new BC jars (`bcprov-jdk18on-1.84.jar`, `bcpkix-jdk18on-1.84.jar`,
+  `bcutil-jdk18on-1.84.jar`).  Runtime stage's "Phase 3 bundled JAR
+  refresh" block adds three `install -m 400` lines and four `rm`
+  entries for the legacy 1.60 filenames.  A new ~40-line comment
+  block above the COPY-lines documents the artifact-set choice
+  (3 in, 4 out) with rationale for each disposition.
+- **`checksums/SHA256SUMS`** -- adds three SHA256 lines for the
+  Maven Central BC 1.84 jars.
+- **`uv-patcher/src/main/resources/airvision-renames.json`**:
+  - `jarFilenameRenames`: 4 new entries (2 jdk15on->jdk18on renames,
+    2 jdk15on->empty removals)
+  - `jarFilenameAdditions`: 1 new entry (`bcutil-jdk18on-1.84.jar`)
+  - `_jarFilenameAdditions_comment`: extended with Phase 5 rationale
+    for `bcutil`
+  - `_changelog`: new v4 entry summarising the Phase 5 rewrites
+- **`uv-patcher/src/test/java/.../RenameSpecTest.java`** -- bumps the
+  `jarFilenameAdditions` count assertion from 7 to 8, adds 4 BC rename
+  assertions + 1 bcutil-in-additions assertion.
+- **`README.md`** -- "What's modernized" table gains a BouncyCastle
+  row matching the format of the existing libssl1.1 / log4j rows.
+- (no uv-patcher Java code changes -- the existing rename-with-empty-
+  replacement + Class-Path-additions mechanisms already cover the
+  Phase 5 spec entries cleanly.)
+
+### Verification
+
+- `mvn -B test` in `uv-patcher/`: **37/37 pass** (new BC entries
+  asserted; pre-existing tests unchanged).
+- `docker build --no-cache --platform linux/amd64`: succeeds.  Image
+  size unchanged within rounding (3 jars in, 4 jars out at similar
+  per-jar sizes).
+- Inside the built image:
+  ```text
+  $ docker run --rm <image> ls /usr/lib/unifi-video/lib/ | grep ^bc
+    bcpkix-jdk18on-1.84.jar
+    bcprov-jdk18on-1.84.jar
+    bcutil-jdk18on-1.84.jar
+  $ docker run --rm <image> ls /usr/lib/unifi-video/lib/ | grep 'jdk15on-160'
+    (no output -- all four legacy jars correctly absent)
+  ```
+- Container start against a fresh ephemeral data dir reaches
+  `(healthy)` in ~90 seconds.  4-endpoint probe returns expected HTTP
+  codes (`/` 200, `/api/2.0/bootstrap` 200, `/api/2.0/login` 400
+  for bogus creds with no admin user yet, `/api/2.0/server` 200).
+- `openssl s_client -connect <container>:7443 -tls1_2` succeeds with
+  TLSv1.2 + `ECDHE-RSA-AES256-GCM-SHA384` + self-signed cert
+  (CN=UniFi-Video Controller, UID=<install-unique-uuid>) -- this
+  proves BC 1.84's `X509v3CertificateBuilder` + `JcaContentSignerBuilder`
+  generated the controller's self-signed cert successfully, which is
+  the highest-risk airvision BC code path.
+- `openssl s_client -connect <container>:7442 -tls1_2` from inside
+  the container succeeds with the same cert + cipher (Phase 3.4 cipher
+  regression check passes).
+- Patched `airvision.jar` MANIFEST.MF Class-Path references
+  `bcprov-jdk18on-1.84.jar`, `bcpkix-jdk18on-1.84.jar`,
+  `bcutil-jdk18on-1.84.jar` and does NOT reference any `jdk15on-160`
+  filename.
+- `uv-patcher` boot log: "discovered 174 class renames, 1608 member
+  renames" + "airvision rewrite complete: 990 classes processed, 174
+  class entries renamed, 1608 method/field references renamed, 2
+  Bootstrap.setCatalina* call(s) rewritten" -- same counts as
+  v3.10.13-18, confirming no incidental rewriting changes.
+- `grep -cE '[ERROR]' /var/log/unifi-video/server.log` returns 1 -- a
+  single pre-existing "Error enabling JCE strong security" line from
+  airvision's Java-8-era reflective JCE-unlimited hack that doesn't
+  work on Java 11+ but is benign because Java 9+ ships JCE unlimited
+  as the default.  Identical line + count appears in the v3.10.13-18
+  fresh-data smoke; not a Phase 5 regression.
+
+### Not yet verified (carved out for the daytime smoke)
+
+Per the PR opener's request, the following exercises require physical
+NAS access + camera fleet, so they're explicitly out of scope for the
+PR's automated smoke and will be run by the maintainer post-merge
+against the live NAS:
+
+1. **Camera adoption** (G3 + G4) -- exercises BC's PKCS#10 CSR
+   exchange + self-signed-cert verification on a freshly-adopted
+   camera's response.
+2. **24h soak** -- catches any subtle PKIX validation regression in
+   OCSP/CRL paths or in long-lived TLS sessions between the controller
+   and cameras.
+
+If either of these surfaces an issue, expect a v3.10.13-19.1 follow-up
+PR with the specific regression fix (or, worst case, a roll-back to
+1.78 which is the last release where `bcprov-ext` exists and would
+restore the full original artifact set).
+
 ## [v3.10.13-18] -- Phase 7: libssl1.1 from Amazon Linux 2 openssl11 1.1.1zg
 
 ### TL;DR

@@ -83,6 +83,10 @@
     "log4j-slf4j-impl-2.1.jar":            "log4j-slf4j-impl-2.26.0.jar",
     "httpclient-4.5.1.jar":                "httpclient-4.5.14.jar",
     "jbcrypt-0.3m.jar":                    "jbcrypt-0.4.jar",
+    "bcprov-jdk15on-160.jar":              "bcprov-jdk18on-1.84.jar",
+    "bcpkix-jdk15on-160.jar":              "bcpkix-jdk18on-1.84.jar",
+    "bcprov-ext-jdk15on-160.jar":          "",
+    "bctls-jdk15on-160.jar":               "",
     "tomcat-embed-core.jar":               "tomcat-embed-core-9.0.118.jar",
     "tomcat-embed-el.jar":                 "tomcat-embed-el-9.0.118.jar",
     "tomcat-embed-jasper.jar":             "tomcat-embed-jasper-9.0.118.jar",
@@ -100,7 +104,14 @@
     "at Tomcat startup, every web route 404s, the EMS email service",
     "fails its initialiser, and the broken state is masked because the",
     "file appender swallows the stack trace.  Filenames must match the",
-    "install -m 400 lines in the Dockerfile."
+    "install -m 400 lines in the Dockerfile.",
+    "",
+    "Phase 5 (v3.10.13-19): bcutil-jdk18on-1.84.jar.  BC reorganised its",
+    "shared utility classes into a separate Maven artifact starting in 1.71;",
+    "bcpkix-jdk18on's pom hard-depends on it.  Without bcutil on the",
+    "Class-Path, airvision's self-signed cert generation + PKCS#10 CSR flows",
+    "would throw NoClassDefFoundError at first use.  The legacy 1.60 jars",
+    "didn't need this -- the utility classes lived inside bcprov-jdk15on-160.jar."
   ],
 
   "jarFilenameAdditions": [
@@ -110,10 +121,23 @@
     "javax.activation-1.2.0.jar",
     "istack-commons-runtime-3.0.6.jar",
     "stax-ex-1.7.8.jar",
-    "txw2-2.3.0.1.jar"
+    "txw2-2.3.0.1.jar",
+    "bcutil-jdk18on-1.84.jar"
   ],
 
   "_changelog": [
+    "v4 (Phase 5 / v3.10.13-19) -- BOUNCYCASTLE 1.60 -> 1.84.  Adds four",
+    "    Manifest Class-Path token rewrites for the jdk15on -> jdk18on artifact",
+    "    rename (bcprov, bcpkix) and the two BC artifact retirements (bcprov-ext",
+    "    discontinued by upstream at 1.78.1; bctls unused -- airvision registers",
+    "    BouncyCastleProvider only, never BouncyCastleJsseProvider, and JDK 21",
+    "    JSSE handles the :7443/:7442 connectors).  Adds bcutil-jdk18on-1.84.jar",
+    "    to jarFilenameAdditions: BC's shared utility classes moved into a",
+    "    separate Maven artifact in 1.71+ and bcpkix's pom hard-depends on it.",
+    "    No patcher code changes -- this is pure spec configuration; the existing",
+    "    rename-with-empty-replacement removal mechanism (used since Phase 3 for",
+    "    tomcat-embed-logging-{juli,log4j}.jar) handles the bcprov-ext and bctls",
+    "    removals cleanly.",
     "v3 (Phase 3.5 / v3.10.13-15) -- DUAL-MODE COLLAPSE.  The 'mode' tag is",
     "    removed; the airvision pass now also rewrites the two dangling Tomcat",
     "    9 Bootstrap.setCatalina{Base,Home} call sites in airvision's own",

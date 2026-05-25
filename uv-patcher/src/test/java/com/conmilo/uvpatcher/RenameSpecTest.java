@@ -54,17 +54,35 @@ class RenameSpecTest {
         assertEquals("", spec.jarFilenameRenames().get("tomcat-embed-logging-juli.jar"));
         assertEquals("", spec.jarFilenameRenames().get("tomcat-embed-logging-log4j.jar"));
 
+        // Phase 5 (v3.10.13-19): BouncyCastle 1.60 -> 1.84.
+        // The jdk15on artifacts retire; bcprov + bcpkix get the jdk18on
+        // rename + version bump, bcprov-ext + bctls get dropped entirely
+        // (rename to empty == remove from Class-Path).  See the Phase 5
+        // changelog block in airvision-renames.json for the audit trail.
+        assertEquals("bcprov-jdk18on-1.84.jar",
+                spec.jarFilenameRenames().get("bcprov-jdk15on-160.jar"));
+        assertEquals("bcpkix-jdk18on-1.84.jar",
+                spec.jarFilenameRenames().get("bcpkix-jdk15on-160.jar"));
+        assertEquals("", spec.jarFilenameRenames().get("bcprov-ext-jdk15on-160.jar"),
+                "bcprov-ext discontinued at 1.78.1 + airvision doesn't use ext classes");
+        assertEquals("", spec.jarFilenameRenames().get("bctls-jdk15on-160.jar"),
+                "bctls unused -- airvision registers BouncyCastleProvider only, not JsseProvider");
+
         // _comment keys must NOT leak into the active map.
         assertFalse(spec.jarFilenameRenames().containsKey("_comment"),
                 "comment keys must not be present as real entries");
 
-        // Phase 3.2: JAXB + JAF additions for Java 11+ compatibility.
+        // Phase 3.2 + Phase 5: 7 JAXB/JAF runtime JARs + 1 bcutil (BC 1.71+
+        // moved its shared utility classes into a separate Maven artifact;
+        // bcpkix-jdk18on's pom hard-depends on it).
         assertTrue(spec.jarFilenameAdditions().contains("jaxb-api-2.3.1.jar"),
                 "JAXB API must be added to airvision Class-Path");
         assertTrue(spec.jarFilenameAdditions().contains("javax.activation-1.2.0.jar"),
                 "JAF must be added to airvision Class-Path");
-        assertEquals(7, spec.jarFilenameAdditions().size(),
-                "JAXB + JAF runtime requires exactly 7 JARs on Java 21");
+        assertTrue(spec.jarFilenameAdditions().contains("bcutil-jdk18on-1.84.jar"),
+                "bcutil (BC 1.71+ transitive dep) must be added to airvision Class-Path");
+        assertEquals(8, spec.jarFilenameAdditions().size(),
+                "JAXB + JAF (7) + bcutil (1) = 8 additions on Java 21 with BC 1.84");
     }
 
     private static RenameSpec loadResource(String resourcePath) throws Exception {
