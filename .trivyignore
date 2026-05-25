@@ -10,6 +10,56 @@
 # the new libssl.so.1.1 + libcrypto.so.1.1 .so files don't trigger any
 # package-level CVE matches at all, making the 38 audit entries obsolete.
 #
+# Phase 6 (v3.10.13-22) added 3 entries for Guava 14.0.1 CVEs, each
+# justified by a JAR-bytecode reachability audit -- see docs/PHASE-6-AUDIT.md
+# for the methodology + raw output, and docs/audit-guava-phase6.py for
+# the script (re-runnable by future maintainers / CI).
+#
+# Format for new entries:
+#   - one or two-line rationale comment block
+#   - reference URL on its own line (NVD, Ubuntu CVE JSON,
+#     explore.alas.aws.amazon.com, etc.)
+#   - the bare CVE ID on its own line.
+
+# -- Guava 14.0.1 residuals (Phase 6, v3.10.13-22) --------------------------
+#
+# guava-14.0.1.jar ships inside the UniFi Video bundle and is coupled to
+# Guice 3.0's ABI (Guice 3.0 references com.google.common.collect.MapMaker
+# internals removed in Guava 20+, so the .jar can't be bumped without
+# simultaneously bumping Guice to 5.1.0; per docs/PHASE-5-ROADMAP.md
+# that's a 3+ session bytecode-rewrite effort rated High risk).  Instead
+# we audited reachability of the three vulnerable APIs across all 104
+# shipped JARs (36,498 .class files) at the bytecode constant-pool level
+# -- zero call sites found in any JAR other than guava-14.0.1.jar itself.
+# Audit script: docs/audit-guava-phase6.py.  Evidence + per-set raw
+# output: docs/PHASE-6-AUDIT.md.
+
+# CVE-2023-2976 (medium) -- com.google.common.io.Files.createTempDir()
+# creates temp dirs world-readable on POSIX, allowing local information
+# disclosure.  Fixed in Guava 32.0.0-jre.  Audit: zero Methodref
+# invocations of Files.createTempDir across all 104 shipped JARs.
+# https://nvd.nist.gov/vuln/detail/CVE-2023-2976
+CVE-2023-2976
+
+# CVE-2018-10237 (medium) -- AtomicDoubleArray (de)serialization and
+# CompoundOrdering allow unbounded memory allocation from attacker-
+# controlled input.  Fixed in Guava 24.1.1-jre.  Audit: zero Class
+# references to AtomicDoubleArray or CompoundOrdering, zero Methodref
+# invocations of Ordering.compound (the only public entry to
+# CompoundOrdering), and zero Utf8-string references to either FQN
+# across all 104 shipped JARs.
+# https://nvd.nist.gov/vuln/detail/CVE-2018-10237
+CVE-2018-10237
+
+# CVE-2020-8908 (low) -- same Files.createTempDir() temp-dir permission
+# issue as CVE-2023-2976, originally filed separately.  Fixed in
+# Guava 30.0-jre.  Same audit verdict as CVE-2023-2976: zero reachable
+# call sites.
+# https://nvd.nist.gov/vuln/detail/CVE-2020-8908
+CVE-2020-8908
+
+# -- end Guava 14.0.1 residuals ---------------------------------------------
+#
 # If a future change reintroduces a manually-installed deb/rpm in the
 # runtime image and Trivy starts reporting false positives, add new
 # entries here with the per-CVE Ubuntu-CVE-JSON or
