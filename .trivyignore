@@ -10,7 +10,7 @@
 # the new libssl.so.1.1 + libcrypto.so.1.1 .so files don't trigger any
 # package-level CVE matches at all, making the 38 audit entries obsolete.
 #
-# Phase 6 (v3.10.13-22) added 3 entries for Guava 14.0.1 CVEs, each
+# Phase 6 (v3.10.13-23) added 3 entries for Guava 14.0.1 CVEs, each
 # justified by a JAR-bytecode reachability audit -- see docs/PHASE-6-AUDIT.md
 # for the methodology + raw output, and docs/audit-guava-phase6.py for
 # the script (re-runnable by future maintainers / CI).
@@ -21,7 +21,7 @@
 #     explore.alas.aws.amazon.com, etc.)
 #   - the bare CVE ID on its own line.
 
-# -- Guava 14.0.1 residuals (Phase 6, v3.10.13-22) --------------------------
+# -- Guava 14.0.1 residuals (Phase 6, v3.10.13-23) --------------------------
 #
 # guava-14.0.1.jar ships inside the UniFi Video bundle and is coupled to
 # Guice 3.0's ABI (Guice 3.0 references com.google.common.collect.MapMaker

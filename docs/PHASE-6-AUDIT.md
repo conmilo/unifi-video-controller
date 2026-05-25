@@ -1,6 +1,6 @@
 # Phase 6 audit: Guava 14.0.1 reachability
 
-**Status:** completed 2026-05-25 as part of `v3.10.13-22`.  Result:
+**Status:** completed 2026-05-25 as part of `v3.10.13-23`.  Result:
 **zero reachable call sites** for any of the three vulnerable Guava
 14.0.1 APIs across every JAR the runtime image ships.  All three
 CVEs (`CVE-2023-2976`, `CVE-2018-10237`, `CVE-2020-8908`) are

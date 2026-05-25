@@ -6,6 +6,221 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-23] -- Phase 6 closed: Guava 14.0.1 reachability audit + `.trivyignore` suppression
+
+### TL;DR
+
+Close the last three open Trivy alerts (Guava 14.0.1) via a static
+reachability audit instead of a Guice 3.0 + Guava 14 lockstep bump.
+The audit script (`docs/audit-guava-phase6.py`) parses every shipped
+JAR's `.class` files at the constant-pool level looking for any
+`Methodref` / `Class` / `Utf8`-string reference to the three vulnerable
+APIs:
+
+- `com.google.common.io.Files.createTempDir()` (CVE-2023-2976, CVE-2020-8908)
+- `com.google.common.collect.Ordering.compound(...)` -> `CompoundOrdering` (CVE-2018-10237)
+- `com.google.common.util.concurrent.AtomicDoubleArray` (CVE-2018-10237)
+
+Across **104 JARs / 36,498 `.class` files** (the upstream `.deb`
+bundle + the Maven Central modernized swap-ins + `uv-patcher.jar`):
+**zero hits**.  Per-CVE suppressions added to `.trivyignore` with the
+audit cited as the rationale.
+
+**Zero behavioural change.**  Image bytes are identical to v3.10.13-21
+(no Dockerfile / JAR changes).  Trivy alert count: **3 -> 0**.
+
+### Why this instead of the full bump
+
+`docs/PHASE-5-ROADMAP.md` Phase 6 section scopes the canonical path:
+Guice 3.0 -> 5.1.0 + Guava 14.0.1 -> 32.0.0-jre lockstep + 8 satellite
+Guice JARs + airvision Class-Path rewrite + a 5-endpoint smoke battery.
+That work is rated **High** risk / 3+ focused sessions because
+airvision's bytecode references 38+ `com.google.inject.*` types and
+Guice 4.x removed / changed several of them (`Stage.PRODUCTION`
+constructor signatures, `@Provides @Override`, `TypeLiteral(Type)`,
+`ServletModule` package layout).
+
+The audit-based path mirrors the methodology Phase 4 (`v3.10.13-16`)
+used to close 38 of the libssl1.1 alerts -- "Trivy reports the CVE
+against the binary we ship, but our environment doesn't reach the
+vulnerable code path, so suppress with cited evidence."  Same shape,
+different evidence source (Ubuntu's CVE JSON API there, JVM bytecode
+constant-pool analysis here).
+
+The Path 1 (full bump) plan stays in `docs/PHASE-5-ROADMAP.md` as a
+re-entry point if a future Guava CVE lands that DOES intersect the
+audit's surface -- the script would surface a hit in that case and
+the bump becomes mandatory.
+
+### What the audit checks
+
+For each vulnerable API, three independent signals:
+
+1. **`Methodref` constant pool entries** -- the JVM's record of every
+   compiled `invokestatic` / `invokevirtual` / `invokespecial` /
+   `invokeinterface` call.  `javac` adds an entry for every method
+   invocation; entries are never present for methods that aren't
+   invoked.  This is the strongest static reachability signal short
+   of full data-flow analysis.
+2. **`Class` constant pool entries** -- type references (`new
+   ClassName`, field type, generic bound, checkcast, instanceof,
+   class-literal `.class`).  Catches `new AtomicDoubleArray(...)` and
+   `AtomicDoubleArray foo = ...` field declarations.
+3. **`Utf8` constant pool entries** matching the fully-qualified
+   class name -- catches reflective dispatch via
+   `Class.forName("com.google.common...")`.  Doesn't catch
+   dynamically-built class names (theoretical hole, discussed in
+   `docs/PHASE-6-AUDIT.md` Caveats section).
+
+### Scope of the audit
+
+Three sets of JARs covering every classloader path in the image:
+
+| Set | Source | JARs | Classes | Hits |
+|---|---|---:|---:|---:|
+| A | upstream `unifi-video.deb` bundle (`/root/uv-harden/work/lib/`) | 82 | 21,505 | 0 |
+| B | Maven Central modernized swap-ins (Dockerfile fetcher URLs) | 21 | 13,900 | 0 |
+| C | `uv-patcher.jar` (own JVM at container start) | 1 | 1,093 | 0 |
+| | **Total** | **104** | **36,498** | **0** |
+
+Self-references inside `guava-14.0.1.jar` itself are skipped (that
+JAR DEFINES the vulnerable APIs; the question is whether anything
+ELSE calls into it).
+
+Scanning the upstream `.deb` bundle (set A) instead of only the post-
+image-build JAR set is **deliberately conservative**: it audits both
+the JARs that ship unchanged AND the JARs that get swapped out at
+image build time, so any new vulnerable call site in either category
+would be visible.
+
+### Per-CVE disposition
+
+| CVE | Severity | Fixed in | Audit verdict | Action |
+|---|---|---|---|---|
+| CVE-2023-2976 | medium | Guava 32.0.0-jre | 0 `Files.createTempDir` invocations | suppress in `.trivyignore` |
+| CVE-2018-10237 | medium | Guava 24.1.1-jre | 0 `AtomicDoubleArray` / `CompoundOrdering` class refs, 0 `Ordering.compound` invocations | suppress in `.trivyignore` |
+| CVE-2020-8908 | low | Guava 30.0-jre | same target as CVE-2023-2976; same zero-hit result | suppress in `.trivyignore` |
+
+### Why the audit is defensible
+
+The strongest concern with bytecode-level reachability analysis is
+reflective dispatch via `Class.forName(...)` -- a vulnerable method
+could be reached without a `Methodref` entry if the class name and
+method name are constructed at runtime.
+
+The audit hedges this in two ways:
+
+1. **`Utf8` string check** -- still zero hits for any of
+   `com.google.common.io.Files`, `com.google.common.util.concurrent.AtomicDoubleArray`,
+   `com.google.common.collect.CompoundOrdering` across all 104 JARs.
+   So a simple `Class.forName("com.google.common.io.Files")` would
+   have been caught.
+2. **airvision-specific reasoning** -- airvision uses Guice for
+   dependency injection, and Guice's binding mechanism uses class
+   objects directly (`bind(Foo.class).to(...)` etc.), not string
+   names.  airvision has no string-based dispatch into Guava and no
+   ServiceLoader-style metadata files (`META-INF/services/`)
+   pointing at Guava types.  Verified by grep over the decompile.
+
+Only a truly dynamic dispatch (where neither the class name nor the
+method name appears as a static string anywhere in the bytecode)
+could evade the audit.  No shipped JAR is in the business of doing
+dynamic Guava dispatch.
+
+### Files added
+
+- **`docs/audit-guava-phase6.py`** (258 lines) -- the audit script
+  itself.  Self-contained Python 3, no external deps; parses class
+  file constant pools per the JVM spec; runs in ~2 s for the .deb
+  bundle.
+- **`docs/PHASE-6-AUDIT.md`** -- evidence document.  Methodology,
+  scope (the three JAR sets with JAR-by-JAR enumeration), result
+  (per-set hit counts), caveats (reflective dispatch + suppression
+  rot), re-running instructions (with the full Maven Central URL
+  block for set B reproducibility).
+
+### Files changed
+
+- **`.trivyignore`** -- added 3 suppression blocks for the Guava CVEs
+  with per-CVE rationale (audit details + Guava fix version + NVD
+  reference URL).  File-level header updated to mention Phase 6
+  alongside the existing Phase 7 history.
+- **`docs/PHASE-5-ROADMAP.md`** -- top-of-doc status banner amended
+  to note Phase 6 CLOSED (audit-based suppression).  Phase 6 section
+  header gains a callout pointing at `PHASE-6-AUDIT.md`.  The full
+  Path 1 bump plan is preserved verbatim as a re-entry point for the
+  case where a future CVE forces a bump.
+
+### Files NOT changed (intentionally)
+
+- `Dockerfile` -- no JAR changes; image bytes identical to v3.10.13-21.
+- `checksums/SHA256SUMS` -- same.
+- Any of the `uv-patcher` Java sources.
+- `run.sh`, `migrate-mongo.sh`.
+- `README.md` -- the "Security" section continues to reference the
+  CHANGELOG for current residual count; updated alert math (3 -> 0)
+  is implicit in the v3.10.13-23 entry.
+
+### Verification
+
+- **Audit script reruns** -- three separate invocations against sets
+  A, B, C; all report `RESULT: ZERO HITS`.  Reproducible by anyone
+  using the wget block in `docs/PHASE-6-AUDIT.md`.
+- **`.trivyignore` syntax** -- Trivy's parser ignores `#`-prefixed
+  comment lines and reads bare CVE IDs one-per-line; the file has
+  three CVE IDs on their own lines plus comment blocks.  Confirmed
+  by `trivy image --ignorefile .trivyignore ...` exiting with
+  alert-count reduced by 3 (manual smoke; CI will confirm
+  post-merge).
+
+### Residuals (post-merge)
+
+- **0 unsuppressed alerts** for the runtime image.
+- 3 suppressed-with-rationale entries in `.trivyignore`
+  (the Guava CVEs from this release).
+- 12 libssl1.1 alerts that Phase 7 (`v3.10.13-18`) already closed
+  structurally -- no suppression needed (Trivy can't match them
+  without dpkg/rpm metadata for the manually-extracted `.so` files).
+
+Expected post-release alert count: **0** (was 3 after v3.10.13-21).
+
+### Re-entry conditions for the full Path 1 bump
+
+The audit-based closure is durable only as long as nothing in the
+image starts calling the vulnerable APIs.  Trigger conditions for
+revisiting Path 1:
+
+1. The audit script flags a new hit on re-run (i.e., a future
+   maintainer modifies a shipped JAR and the new bytecode references
+   a vulnerable Guava API).  CI could surface this; today the script
+   is documented but not wired into a workflow.  See `docs/PHASE-6-AUDIT.md`
+   "Re-running the audit" for the manual procedure.
+2. A new Guava CVE lands against an API that airvision DOES use --
+   the audit's target list would be expanded and the new run might
+   surface a hit.  Examples: `com.google.common.util.concurrent`
+   (airvision uses `ListeningExecutorService`, `MoreExecutors`,
+   `SettableFuture` per the decompile), `com.google.common.io.Files`
+   (airvision uses `createParentDirs` and `write`).  If any of those
+   acquire a CVE, the audit must re-run with the new method names.
+3. The audit's reflective-dispatch caveat materialises in practice
+   (a shipped JAR adds dynamic `Class.forName(...)` into Guava).
+   None of the 104 JARs do this today; defensive monitoring would be
+   a follow-up workflow if desired.
+
+In any of those cases, expand `docs/audit-guava-phase6.py`'s target
+list, re-run, document the result, and either re-suppress with new
+rationale OR escalate to the Path 1 bump.
+
+### Commits (3 total)
+
+| # | Commit | Summary |
+|---|---|---|
+| a | `audit: Phase 6 reachability scan for Guava 14.0.1 CVEs` | adds `docs/audit-guava-phase6.py` + `docs/PHASE-6-AUDIT.md` |
+| b | `sec: suppress Guava 14.0.1 CVEs in .trivyignore (audit shows unreachable)` | adds the three CVE entries with cited audit |
+| c | `docs: mark Phase 6 closed in PHASE-5-ROADMAP.md + CHANGELOG entry` | this entry + roadmap status banner |
+
+---
+
 ## [v3.10.13-22] -- MongoDB 4.4.30 + prune redundant Java apt packages (closes 8 CVEs)
 
 ### TL;DR

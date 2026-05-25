@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Phase 6 (v3.10.13-22) Guava 14.0.1 reachability audit.
+Phase 6 (v3.10.13-23) Guava 14.0.1 reachability audit.
 
 For each shipped JAR, parse every .class file's constant pool and check
 whether it contains a Methodref / InterfaceMethodref / Class entry that
