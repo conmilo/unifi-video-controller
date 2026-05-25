@@ -9,8 +9,16 @@
 #          container start.  This unblocked the move off the AdoptOpenJDK
 #          8u265-b01 pin that v3.10.13-4 required.  See README.md "JRE
 #          history" for the empirical backstory.
-# MongoDB: 4.4.29 (last AVX-free MongoDB; runtime DB)
-#          + 4.2.25 (intermediate, used once for 4.0 -> 4.2 fCV step)
+# MongoDB: 4.4.x runtime DB (default 4.4.29; tunable via ARG MONGO44_VERSION)
+#          + 4.2.x mongod-only fCV stepper (default 4.2.25, ~71 MB on disk;
+#            tunable via ARG MONGO42_VERSION; see mongo42-extractor stage).
+#          The 4.4 major-version ceiling is intentional and dual-anchored:
+#          (1) airvision.jar's bundled mongo-java-driver 2.14.2 lacks the
+#              OP_MSG wire-opcode support that MongoDB 5.0+ requires for
+#              writes (Phase 5/6 driver rewrite -- see PHASE-2-ROADMAP.md
+#              constraint 1), AND
+#          (2) MongoDB 5.0+ requires AVX, which the Apollo Lake reference
+#              target (Celeron J3455 / Goldmont) lacks.
 # Target:  linux/amd64 only (Synology DS918+ / Celeron J3455 / Goldmont)
 # ===========================================================================
 # Patches that apply at runtime (uv-patcher; see uv-patcher/README.md):
@@ -37,10 +45,23 @@ ARG UBUNTU_DIGEST=sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194
 # advisory closing the same 4 CVEs (-28387..-28390) flagged against us.
 ARG AL2_DIGEST=sha256:53c36e786bbe63f21fac81b005149233df0abd1eb0bb13a49308dd03b3e3b1a2
 
+# MongoDB tarball version pins.  Tunable at build time, e.g.:
+#   docker buildx build --build-arg MONGO44_VERSION=4.4.30 ...
+# Each value is tied to a matching SHA256 entry in checksums/SHA256SUMS,
+# so bumping a value here without regenerating SHA256SUMS will fail the
+# fetcher's checksum verification -- the right failure mode for an
+# unverified binary.  The 4.4 major-version ceiling is intentional; see
+# the header comment above for the dual-constraint rationale (driver +
+# AVX) that blocks MongoDB 5.0+.
+ARG MONGO44_VERSION=4.4.29
+ARG MONGO42_VERSION=4.2.25
+
 # ---------------------------------------------------------------------------
 # Stage 1: fetcher -- download + verify all pinned third-party artifacts
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04@${UBUNTU_DIGEST} AS fetcher
+ARG MONGO44_VERSION
+ARG MONGO42_VERSION
 
 # hadolint ignore=DL3008,DL3015
 RUN apt-get update && \
@@ -66,8 +87,8 @@ COPY checksums/SHA256SUMS ./SHA256SUMS
 # noble OR the new resolute (26.04 LTS).  We track all four log4j JARs
 # from Maven Central directly until apt catches up.
 RUN set -eux; \
-    wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz; \
-    wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu1804-4.2.25.tgz; \
+    wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2004-${MONGO44_VERSION}.tgz; \
+    wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu1804-${MONGO42_VERSION}.tgz; \
     wget -q https://dl.ubnt.com/firmwares/ufv/v3.10.13/unifi-video.Ubuntu18.04_amd64.v3.10.13.deb; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.26.0/log4j-api-2.26.0.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.26.0/log4j-core-2.26.0.jar; \
@@ -177,9 +198,56 @@ RUN rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' openssl11-lib
     cat /openssl11-libs-version.txt
 
 # ---------------------------------------------------------------------------
-# Stage 4: runtime image
+# Stage 4: mongo42-extractor -- unpack the 4.2 tarball, keep only mongod.
+#
+# migrate-mongo.sh invokes /opt/mongodb-4.2/bin/mongod exactly once (the
+# 4.0 -> 4.2 fCV step) and references no other 4.2 binary.  The upstream
+# tarball ships 13 binaries totalling ~302 MB extracted (mongod, mongo,
+# mongos, mongodump, mongorestore, mongoexport, mongoimport, mongofiles,
+# mongostat, mongotop, mongoreplay, bsondump, install_compass); only
+# mongod (~74 MB) is needed at runtime, so the final size of
+# /opt/mongodb-4.2/ drops to ~71 MB.  Stripping in this throwaway stage
+# keeps the runtime stage's layer hygiene clean -- the unused bytes
+# never enter any layer that ships in the final image.
+#
+# Empirically verified (CHANGELOG v3.10.13-20 smoke transcript): `ldd
+# /opt/mongodb-4.2/bin/mongod` resolves only to OS libs (libcurl, glibc
+# family) and our /usr/local/lib/libssl.so.1.1 + libcrypto.so.1.1 from
+# the libssl11-source stage; no shared lib lives inside /opt/mongodb-4.2/,
+# so deleting siblings cannot break mongod.  All five operations
+# migrate-mongo.sh issues against mongod 4.2 -- start_mongo, ping,
+# get_fcv, set_fcv, stop_mongo -- succeed after the strip.
+#
+# LICENSE-Community.txt, THIRD-PARTY-NOTICES, and MPL-2 are retained
+# from the upstream dist root for SSPL / third-party-attribution
+# compliance.  README and THIRD-PARTY-NOTICES.gotools are dropped:
+# README is informational only, and the .gotools attribution describes
+# the 12 Go-built binaries (mongodump et al) we no longer ship.
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04@${UBUNTU_DIGEST} AS mongo42-extractor
+ARG MONGO42_VERSION
+COPY --from=fetcher /artifacts/mongodb-linux-x86_64-ubuntu1804-${MONGO42_VERSION}.tgz \
+                    /tmp/mongo42.tgz
+RUN set -eux; \
+    mkdir -p /opt; \
+    tar -xzf /tmp/mongo42.tgz -C /opt; \
+    mv /opt/mongodb-linux-x86_64-ubuntu1804-${MONGO42_VERSION} /opt/mongodb-4.2; \
+    rm /tmp/mongo42.tgz; \
+    find /opt/mongodb-4.2/bin -mindepth 1 -not -name mongod -delete; \
+    rm -f /opt/mongodb-4.2/README \
+          /opt/mongodb-4.2/THIRD-PARTY-NOTICES.gotools; \
+    # Smoke: mongod survived the strip and is still executable.  We can't
+    # run `mongod --version` here -- this builder is a bare ubuntu:24.04
+    # without libcurl.so.4 -- so the deeper version smoke happens in the
+    # runtime stage's existing `mongod-4.2 --version` line, after the
+    # apt-installed libcurl4 is available.
+    test -x /opt/mongodb-4.2/bin/mongod
+
+# ---------------------------------------------------------------------------
+# Stage 5: runtime image
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04@${UBUNTU_DIGEST}
+ARG MONGO44_VERSION
 
 LABEL org.opencontainers.image.title="UniFi Video Controller (modernized)" \
       org.opencontainers.image.description="UniFi Video 3.10.13 on Ubuntu 24.04 + OpenJDK 21 LTS + MongoDB 4.4 (with 4.0->4.2->4.4 fCV migration); airvision identifier rewrite + Tomcat 9 Bootstrap shim applied at runtime by uv-patcher" \
@@ -281,15 +349,19 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # -------- libssl1.1 + libcrypto.so.1.1 (MongoDB 4.4 mongod) ----------------
-# The mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz binary at /opt/mongodb-4.4/
-# was built on Ubuntu 20.04 and dynamically links libssl.so.1.1 +
-# libcrypto.so.1.1.  Ubuntu 24.04 only ships libssl3, so we still need to
-# provide the legacy libs.  This pin is permanent until we can move off
-# MongoDB 4.4 -- and we can't, because 5.0+ requires AVX and the deploy
-# target (Apollo Lake Celeron J3455) doesn't have AVX.  Verified via
-# `objdump -p .../mongod | grep NEEDED`.  UV-bundled JNI .so files
-# (libubnt_*_jni.so, libsigar-amd64-linux.so) and the unifi-video.deb
-# itself do NOT link against libssl/libcrypto.
+# The mongodb-linux-x86_64-ubuntu2004-${MONGO44_VERSION}.tgz binary at
+# /opt/mongodb-4.4/ was built on Ubuntu 20.04 and dynamically links
+# libssl.so.1.1 + libcrypto.so.1.1.  Ubuntu 24.04 only ships libssl3, so
+# we still need to provide the legacy libs.  This pin is permanent until
+# we can move off MongoDB 4.4 -- and we can't, because (1) airvision.jar
+# bundles the legacy mongo-java-driver 2.14.2 which predates OP_MSG and
+# can't speak MongoDB 5.0+'s required wire protocol (Phase 5/6 driver
+# rewrite per docs/PHASE-2-ROADMAP.md; ~45 source files we don't have),
+# AND (2) MongoDB 5.0+ requires AVX which the Apollo Lake reference
+# target (Celeron J3455) lacks.  Verified via `objdump -p .../mongod |
+# grep NEEDED`.  UV-bundled JNI .so files (libubnt_*_jni.so,
+# libsigar-amd64-linux.so) and the unifi-video.deb itself do NOT link
+# against libssl/libcrypto.
 #
 # Phase 7 (v3.10.13-18): switched from the focal-security libssl1.1 deb
 # (1.1.1f-1ubuntu2.24, frozen since Canonical moved 1.1.1 backports to
@@ -358,15 +430,18 @@ RUN java -version && \
     test -x /usr/bin/java && \
     test -d "${JAVA_HOME}"
 
-# -------- MongoDB 4.4 runtime + 4.2 fCV stepper ----------------------------
-COPY --from=fetcher /artifacts/mongodb-linux-x86_64-ubuntu2004-4.4.29.tgz /tmp/mongo44.tgz
-COPY --from=fetcher /artifacts/mongodb-linux-x86_64-ubuntu1804-4.2.25.tgz /tmp/mongo42.tgz
+# -------- MongoDB 4.4 runtime + 4.2 fCV stepper (mongod-only) --------------
+# 4.4: full tarball extracted here -- runtime mongod, mongo shell client
+#      (used by migrate-mongo.sh's ping/getParameter/setFCV/shutdown
+#      commands).
+# 4.2: stripped to bin/mongod + license/notices in the mongo42-extractor
+#      stage above (~302 MB -> ~71 MB).  COPYed in as a pre-built tree.
+COPY --from=fetcher /artifacts/mongodb-linux-x86_64-ubuntu2004-${MONGO44_VERSION}.tgz /tmp/mongo44.tgz
+COPY --from=mongo42-extractor /opt/mongodb-4.2 /opt/mongodb-4.2
 RUN mkdir -p /opt && \
     tar -xzf /tmp/mongo44.tgz -C /opt && \
-    mv /opt/mongodb-linux-x86_64-ubuntu2004-4.4.29 /opt/mongodb-4.4 && \
-    tar -xzf /tmp/mongo42.tgz -C /opt && \
-    mv /opt/mongodb-linux-x86_64-ubuntu1804-4.2.25 /opt/mongodb-4.2 && \
-    rm /tmp/mongo44.tgz /tmp/mongo42.tgz && \
+    mv /opt/mongodb-linux-x86_64-ubuntu2004-${MONGO44_VERSION} /opt/mongodb-4.4 && \
+    rm /tmp/mongo44.tgz && \
     ln -s /opt/mongodb-4.4/bin/mongo /usr/local/bin/mongo && \
     ln -s /opt/mongodb-4.4/bin/mongod /usr/local/bin/mongod && \
     ln -s /opt/mongodb-4.2/bin/mongod /usr/local/bin/mongod-4.2 && \

@@ -17,10 +17,11 @@ Description: MongoDB 4.4 server equivs stub
    | mongodb-org-server (>= 2.6.0)
    | mongodb-server (>= 2.4.9)
  .
- The real MongoDB 4.4.29 server binaries are shipped to /opt/mongodb-4.4/
- by the Dockerfile in a separate step, with the 4.2.25 server alongside
- at /opt/mongodb-4.2/ used once by migrate-mongo.sh during the 4.0 ->
- 4.2 -> 4.4 featureCompatibilityVersion bridge. Neither tarball install
+ The real MongoDB 4.4.x server binaries are shipped to /opt/mongodb-4.4/
+ by the Dockerfile in a separate step, with the 4.2.x server (mongod-only,
+ ~71 MB stripped via the mongo42-extractor stage) alongside at
+ /opt/mongodb-4.2/ used once by migrate-mongo.sh during the 4.0 -> 4.2
+ -> 4.4 featureCompatibilityVersion bridge. Neither tarball install
  registers with dpkg, hence this stub.
  .
  If you ever need to remove the real MongoDB binaries, this stub will

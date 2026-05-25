@@ -6,6 +6,305 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-20] -- strip MongoDB 4.2 dist to mongod-only + parameterise MongoDB versions
+
+### TL;DR
+
+Image-size trim + minor Dockerfile ergonomics.  Adds a dedicated
+`mongo42-extractor` build stage that strips the upstream MongoDB
+4.2.25 tarball down to `bin/mongod` plus the SSPL-required
+LICENSE / MPL-2 / THIRD-PARTY-NOTICES; the runtime stage copies the
+pre-stripped tree in via `COPY --from=mongo42-extractor` instead of
+extracting the full 302 MB distribution.  Final `/opt/mongodb-4.2/`
+shrinks from 302 MB (13 binaries) to **71 MB** (`mongod` only).
+Image total (compressed) drops from 1001.5 MB to **789.8 MB** --
+**~212 MB saved**.
+
+Also turns the two MongoDB tarball versions into build-time `ARG`s
+(`MONGO44_VERSION=4.4.29`, `MONGO42_VERSION=4.2.25`) so future point
+releases only require a checksum + ARG default bump.
+
+**Zero behavioural change**.  `migrate-mongo.sh`, `run.sh`,
+`uv-patcher`, runtime data layout, the JRE, and the default MongoDB
+versions are all unchanged.  Trivy alert count: unchanged at **3**
+(Guava 14 only -- Phase 6 work).
+
+### Why this is a separate release rather than rolled into Phase 5/6
+
+The strip is a layer-hygiene improvement orthogonal to CVE hardening;
+landing it independently keeps the diff reviewable.  The ARG
+parameterisation enables future maintainer-driven point-release
+bumps (next likely value: `MONGO44_VERSION=4.4.30` if/when upstream
+publishes a 4.4 patch release) without re-litigating the strip.
+
+### What changed at the artifact level
+
+| Path | Before | After | Notes |
+|---|---|---|---|
+| `/opt/mongodb-4.2/bin/` | 13 binaries, ~302 MB | `mongod` only, ~74 MB | `migrate-mongo.sh` only invokes `/opt/mongodb-4.2/bin/mongod` |
+| `/opt/mongodb-4.2/` (dir) | dist tree, 302 MB | LICENSE + MPL-2 + THIRD-PARTY-NOTICES + bin/mongod, 71 MB | SSPL-required files retained |
+| `Dockerfile` MongoDB pins | hard-coded `4.4.29` and `4.2.25` literals | `ARG MONGO44_VERSION=4.4.29` / `ARG MONGO42_VERSION=4.2.25` (overridable) | SHA256SUMS still tied to the default values |
+| Total image (compressed) | 1001.5 MB | 789.8 MB | ~212 MB saving |
+
+### Removed from `/opt/mongodb-4.2/`
+
+Twelve unused binaries: `mongo`, `mongos`, `mongodump`, `mongorestore`,
+`mongoexport`, `mongoimport`, `mongofiles`, `mongostat`, `mongotop`,
+`mongoreplay`, `bsondump`, `install_compass`.
+
+Two unused doc files: `README` (informational only) and
+`THIRD-PARTY-NOTICES.gotools` (Go-tools attribution; we no longer
+ship the 12 Go-built binaries it covers).
+
+### Why the strip is safe
+
+`migrate-mongo.sh` references `/opt/mongodb-4.2/bin/mongod` exactly
+once (the `MONGOD_42` variable, used only for the 4.0 -> 4.2 fCV
+step).  Verified there are no other references in the image:
+
+```
+$ grep -rn 'mongodb-4\.2/bin/[^m]' /root/unifi-video-controller
+(no matches)
+
+$ grep -rn '/opt/mongodb-4\.2/' /root/unifi-video-controller \
+       | grep -v '/bin/mongod'
+(no matches)
+```
+
+`ldd /opt/mongodb-4.2/bin/mongod` shows no shared lib lives inside
+`/opt/mongodb-4.2/` itself (everything resolves to OS libs +
+`/usr/local/lib/libssl.so.1.1` from the libssl11-source stage), so
+deleting siblings cannot break mongod.
+
+Empirically verified in an existing `uv-test:p7-current` image by
+deleting the unused binaries in-place and replaying every operation
+`migrate-mongo.sh` performs against mongod 4.2:
+
+- `start_mongo` (`--fork --dbpath ... --port 27999`)
+- `wait_mongo` (ping in a loop)
+- `get_fcv` (`db.adminCommand({getParameter:1, featureCompatibilityVersion:1})`)
+- `set_fcv` (`db.adminCommand({setFeatureCompatibilityVersion:"4.2"})`)
+- `stop_mongo` (`db.adminCommand({shutdown:1})`)
+
+All succeed cleanly; mongod log ends with `shutting down with code:0`.
+
+### Why 4.4 stays the major-version ceiling
+
+Two independent constraints, both hard blockers for MongoDB 5.0+:
+
+1. **Driver wire protocol**.  `airvision.jar` bundles
+   `mongo-java-driver-2.14.2.jar` (per `docs/JAR-INVENTORY.md` line
+   474) and imports the legacy `com.mongodb.{DB,DBCollection,DBCursor,
+   DBObject,BasicDBObject}` API.  The 2.x Java driver predates the
+   `OP_MSG` unified wire opcode (added in the 3.6 driver line, late
+   2017).  MongoDB 5.0 **removed** support for the legacy write
+   opcodes the 2.x driver uses, so UV writes against MongoDB 5.0+
+   fail at the wire-protocol level.  Unblocking this is Phase 5/6
+   work per `docs/PHASE-2-ROADMAP.md`: ~45 airvision source files
+   would need ASM bytecode rewriting from legacy `DB*` API to modern
+   `mongodb-driver-sync` types, which Ubiquiti does not ship sources
+   for.
+
+2. **AVX requirement**.  MongoDB 5.0+ uses AVX instructions in its
+   storage engine.  The Apollo Lake reference target (Celeron J3455
+   / Goldmont microarchitecture) lacks AVX, so 5.0+ binaries
+   `SIGILL` at startup.
+
+The new ARGs cannot accidentally escape this ceiling:
+`checksums/SHA256SUMS` only lists 4.4.x / 4.2.x point-release
+entries, so attempting `--build-arg MONGO44_VERSION=5.0.0` hits
+either a 404 on `fastdl.mongodb.org` or a missing-checksum failure
+in `sha256sum -c`.  There is no path to a silently-broken
+UV-on-MongoDB-5 image.
+
+### Why 4.2 stays in the image (briefly)
+
+MongoDB requires walking through every major version's
+`setFeatureCompatibilityVersion` during the 4.0 -> 4.4 upgrade --
+this is the only **officially supported** path.  See the MongoDB
+staff reply at
+<https://www.mongodb.com/community/forums/t/upgrading-from-4-0-to-4-4-using-mongodump/143015/2>
+which describes `mongodump`/`mongorestore` as the "skip the steps"
+alternative but flags it as not officially supported (collection /
+index / oplog formats can change between majors).
+`migrate-mongo.sh` follows the supported in-place fCV walk, which
+requires the 4.2 `mongod` binary to actually be present in the
+image.  Only **mongod** is needed -- the other 12 4.2 binaries are
+never invoked, which is why the strip is safe.
+
+### How to bump MongoDB point releases going forward
+
+1. Regenerate the SHA256 line in `checksums/SHA256SUMS` for the new
+   tarball:
+
+   ```
+   wget -q https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2004-4.4.30.tgz
+   sha256sum mongodb-linux-x86_64-ubuntu2004-4.4.30.tgz
+   ```
+
+2. Update the `MONGO44_VERSION` (or `MONGO42_VERSION`) default in
+   `Dockerfile`'s global ARG block.
+
+3. Rebuild; the fetcher's `sha256sum -c` validates the pin.
+
+A user who wants to test a point-release locally without modifying
+the repo can:
+
+```bash
+docker buildx build \
+    --build-arg MONGO44_VERSION=4.4.30 \
+    -t local:mongo44-bump-test .
+```
+
+...but must also pass an updated SHA256SUMS (or temporarily relax the
+fetcher's checksum verification) since the default SHA256SUMS still
+targets the committed version.  This is the intended failure mode for
+an unverified binary.
+
+### Files NOT changed (intentionally)
+
+- `migrate-mongo.sh` -- binary paths are identical.
+- `run.sh`.
+- `checksums/SHA256SUMS` -- default ARG values target the
+  byte-identical upstream tarballs.
+- `docs/MIGRATION.md` -- user-facing flow is identical.
+- `uv-patcher/**`.
+
+### Changed
+
+- **`Dockerfile`**:
+  - Header comment (lines ~12-21) -- MongoDB summary now spells out
+    both upgrade-blockers (driver pin + AVX) and notes the two new
+    ARG tunables.
+  - Global ARG block (after `AL2_DIGEST`) -- adds `MONGO44_VERSION`
+    and `MONGO42_VERSION` defaults with a comment block explaining
+    their relationship to `checksums/SHA256SUMS` and the 4.4 ceiling.
+  - `fetcher` stage -- re-declares both ARGs and substitutes them
+    into the two MongoDB `wget` URLs (no change to checksum
+    verification semantics).
+  - New `mongo42-extractor` stage between `libssl11-source` and the
+    runtime stage -- untars the 4.2 tarball, deletes every `bin/`
+    entry except `mongod`, deletes the `README` and
+    `THIRD-PARTY-NOTICES.gotools` files (retains LICENSE-Community.txt,
+    MPL-2, THIRD-PARTY-NOTICES), smoke-tests `test -x mongod`.
+  - libssl1.1 comment block (now lines ~346-359) -- updated to
+    spell out **both** upgrade-blockers (driver + AVX) instead of
+    only the AVX one.
+  - Runtime stage MongoDB install block -- replaces the
+    `COPY ...mongo42.tgz` + `tar -xzf` for 4.2 with a single
+    `COPY --from=mongo42-extractor /opt/mongodb-4.2 /opt/mongodb-4.2`;
+    substitutes `${MONGO44_VERSION}` into the remaining 4.4 paths.
+    The `mongod-4.2` symlink and the smoke `mongod-4.2 --version`
+    line are unchanged.
+- **`mongodb-server-equivs.control`** -- long description tweaked
+  from "4.2.25 server alongside at /opt/mongodb-4.2/" to "4.2.x server
+  (mongod-only, ~71 MB stripped via the mongo42-extractor stage)
+  alongside at /opt/mongodb-4.2/".  Cosmetic; the equivs stub itself
+  is unchanged.
+- **`CHANGELOG.md`** -- this entry; plus editorial pass on the three
+  historical "AVX-only" rationale lines (v3.10.13-16 commit-a, v3.10.13-16
+  residuals list, v3.10.13-1 libssl1.1 entry) to prepend the driver
+  constraint so historical and current narrative agree.
+- **`.github/workflows/release.yml`** -- adds the
+  `org.opencontainers.image.description` (and `source` / `url` /
+  `documentation` / `licenses` / `vendor`) to `docker/metadata-action`'s
+  `labels:` block, AND wires `annotations: ${{ steps.meta.outputs.annotations }}`
+  into `docker/build-push-action` so the manifest carries OCI
+  annotations.  GHCR reads the package description from manifest
+  annotations rather than image-config labels, so prior releases
+  showed no description on the package page even though the
+  `Dockerfile` `LABEL org.opencontainers.image.description=...` was
+  set correctly.  v3.10.13-20 is the first release to render a
+  description on GHCR.
+
+### Residuals (unchanged from v3.10.13-19)
+
+- 3 alerts for Guava 14.0.1 -- still deferred to Phase 6 per
+  `docs/PHASE-5-ROADMAP.md` Phase 6 section.
+
+Expected post-release alert count: **3** (unchanged from v3.10.13-19;
+this release does not affect CVE surface).
+
+### Verification (locally, x86_64 host)
+
+- **hadolint** (`--failure-threshold warning`, matching CI): clean.
+- **`docker buildx build --load`**: succeeds.
+- **/opt/mongodb-4.2/ listing inside the built image**:
+
+  ```text
+  $ docker run --rm local:mongo42-strip-test ls /opt/mongodb-4.2/bin/
+  mongod
+
+  $ docker run --rm local:mongo42-strip-test ls /opt/mongodb-4.2/
+  LICENSE-Community.txt
+  MPL-2
+  THIRD-PARTY-NOTICES
+  bin
+
+  $ docker run --rm local:mongo42-strip-test du -sh /opt/mongodb-4.2
+  71M    /opt/mongodb-4.2
+  ```
+
+- **mongod 4.2 version smoke** (resolves libcurl/libssl correctly at
+  runtime via the apt-installed + libssl11-source-COPYed libs):
+
+  ```text
+  $ docker run --rm local:mongo42-strip-test /opt/mongodb-4.2/bin/mongod --version
+  db version v4.2.25
+  git version: 41b59c2bfb5121e66f18cc3ef40055a1b5fb6c2e
+  OpenSSL version: OpenSSL 1.1.1zg  7 Apr 2026
+  allocator: tcmalloc
+  modules: none
+  build environment:
+      distmod: ubuntu1804
+      distarch: x86_64
+      target_arch: x86_64
+
+  $ docker run --rm local:mongo42-strip-test mongod-4.2 --version
+  db version v4.2.25
+  (...same...)
+  ```
+
+- **Image size delta**:
+
+  ```text
+  $ docker image inspect uv-test:p7-current     --format '{{.Size}}'
+  1050100843   # ~1001.5 MB
+
+  $ docker image inspect local:mongo42-strip-test --format '{{.Size}}'
+  828166429    #  ~789.8 MB
+  ```
+
+  Saving: ~212 MB compressed (vs. the on-disk 231 MB for `/opt/mongodb-4.2/`
+  itself; the delta between 231 MB on-disk and 212 MB compressed is
+  Docker layer compression).
+
+- **5-operation `migrate-mongo.sh` smoke**: covered by the previous
+  pre-flight verification against `uv-test:p7-current` per the
+  "Why the strip is safe" section above; not re-run since the image
+  contents are byte-identical to the pre-flight smoke target.
+
+### Not yet verified (post-merge maintainer smoke)
+
+- **Live-data fCV walk** against the production NAS dataset (4.0 ->
+  4.2 -> 4.4 step) -- the local pre-flight verified all 5 mongod
+  operations against the stripped 4.2 binary, but the live walk is
+  the integration test of record.
+- **24h soak** -- same.
+
+If either surfaces an issue, expect a `v3.10.13-20.1` follow-up.
+Rollback target: revert the COPY-from-mongo42-extractor line to the
+in-runtime tar -- restores the full 4.2 dist at the cost of the
+212 MB.
+
+### Commits (3 total)
+
+| # | Commit | Summary |
+|---|---|---|
+| a | `build: strip MongoDB 4.2 dist to mongod-only + parameterise MongoDB versions` | the load-bearing functional change -- new mongo42-extractor stage + ARG parameterisation + dual-constraint comment block updates + equivs.control long-description tweak |
+| b | `docs: CHANGELOG v3.10.13-20 entry + dual-constraint editorial pass on historical AVX rationale` | this entry + the three historical-line clarifications |
+| c | `ci(release): publish OCI manifest annotations so GHCR shows the package description` | release.yml metadata-action labels expansion + build-push-action annotations wiring; CHANGELOG entry note |
+
 ## [v3.10.13-19] -- Phase 5: BouncyCastle 1.60 -> 1.84 (jdk15on -> jdk18on)
 
 ### TL;DR
@@ -607,9 +906,13 @@ the real findings.
 
 So the libssl1.1 backport is required by bundled MongoDB 4.4, not by
 the UV JVM bindings as the Dockerfile and v3.10.13-1 CHANGELOG both
-claimed.  MongoDB 4.4 is the last AVX-free MongoDB; 5.0+ needs AVX
-that Apollo Lake doesn't have, so this pin is permanent.  Corrected
-in commit a (see "Changed" below).
+claimed.  MongoDB 4.4 is the last MongoDB compatible with airvision's
+bundled mongo-java-driver 2.14.2 (MongoDB 5.0+ removed legacy write
+opcodes the 2.x driver uses; OP_MSG support landed in driver 3.6,
+Phase 5/6 work) AND the last AVX-free MongoDB (5.0+ needs AVX that
+Apollo Lake doesn't have), so this pin is permanent.  Corrected
+in commit a (see "Changed" below); v3.10.13-20 added the driver
+half of the rationale.  See also the v3.10.13-20 entry below.
 
 ### Decision: stay on Ubuntu 24.04 noble (don't move to 26.04 resolute)
 
@@ -777,8 +1080,13 @@ After Phase 4 ships, the Security tab will show:
   -28390).  ESM is paywalled; the public 1.1.1f-1ubuntu2.24 deb we
   install does NOT carry the fix.  Left open as a genuine tracking
   signal -- when this image moves off MongoDB 4.4 (won't happen
-  until either an AVX-free MongoDB 5.0+ exists OR the project drops
-  Apollo Lake support), libssl1.1 leaves with it.
+  until either airvision's bundled mongo-java-driver 2.14.2 is
+  replaced with a 3.6+ driver that speaks OP_MSG -- Phase 5/6 work
+  per docs/PHASE-2-ROADMAP.md -- AND an AVX-free MongoDB 5.0+ exists
+  OR the project drops Apollo Lake support), libssl1.1 leaves with
+  it.  (Phase 7 / v3.10.13-18 closed all 12 of these via Amazon
+  Linux 2's openssl11-libs RPM; this paragraph kept for historical
+  context.)
 
 Total Phase 4 close rate: 8 JAR + 32 libssl1.1 + 14 OS = 54 alerts.
 Total residuals: 13 BC/Guava + 12 ESM-only libssl1.1 = 25 alerts.
@@ -2692,11 +3000,14 @@ Original commit history is preserved.
   20.04, dynamically linked against `libssl.so.1.1` + `libcrypto.so.1.1`
   -- verified via `objdump -p .../mongod | grep NEEDED`) still needs it.
   The pin is permanent until we can move off MongoDB 4.4, and we can't,
-  because MongoDB 5.0+ requires AVX which the Apollo Lake deploy target
+  because (1) airvision.jar's bundled mongo-java-driver 2.14.2 can't
+  speak MongoDB 5.0+'s required wire protocol (Phase 5/6 driver rewrite),
+  AND (2) MongoDB 5.0+ requires AVX which the Apollo Lake deploy target
   doesn't have.  (Note: UV's own JNI .so files and the unifi-video.deb
   itself do NOT link against libssl/libcrypto -- earlier CHANGELOG
   revisions and the Dockerfile comment block incorrectly attributed
-  the dependency to the JVM bindings.  Corrected in v3.10.13-16.)
+  the dependency to the JVM bindings.  Corrected in v3.10.13-16; the
+  driver half of the upgrade-blocker was added in v3.10.13-20.)
 - **log4j**: 2.17.0 -> 2.17.2. One micro-bump that closes
   CVE-2021-44832 in the JDBC Appender. SHA256-verified via Apache's
   published SHA512 chain.
