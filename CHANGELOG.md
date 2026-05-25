@@ -205,6 +205,17 @@ an unverified binary.
   historical "AVX-only" rationale lines (v3.10.13-16 commit-a, v3.10.13-16
   residuals list, v3.10.13-1 libssl1.1 entry) to prepend the driver
   constraint so historical and current narrative agree.
+- **`.github/workflows/release.yml`** -- adds the
+  `org.opencontainers.image.description` (and `source` / `url` /
+  `documentation` / `licenses` / `vendor`) to `docker/metadata-action`'s
+  `labels:` block, AND wires `annotations: ${{ steps.meta.outputs.annotations }}`
+  into `docker/build-push-action` so the manifest carries OCI
+  annotations.  GHCR reads the package description from manifest
+  annotations rather than image-config labels, so prior releases
+  showed no description on the package page even though the
+  `Dockerfile` `LABEL org.opencontainers.image.description=...` was
+  set correctly.  v3.10.13-20 is the first release to render a
+  description on GHCR.
 
 ### Residuals (unchanged from v3.10.13-19)
 
@@ -286,12 +297,13 @@ Rollback target: revert the COPY-from-mongo42-extractor line to the
 in-runtime tar -- restores the full 4.2 dist at the cost of the
 212 MB.
 
-### Commits (2 total)
+### Commits (3 total)
 
 | # | Commit | Summary |
 |---|---|---|
 | a | `build: strip MongoDB 4.2 dist to mongod-only + parameterise MongoDB versions` | the load-bearing functional change -- new mongo42-extractor stage + ARG parameterisation + dual-constraint comment block updates + equivs.control long-description tweak |
 | b | `docs: CHANGELOG v3.10.13-20 entry + dual-constraint editorial pass on historical AVX rationale` | this entry + the three historical-line clarifications |
+| c | `ci(release): publish OCI manifest annotations so GHCR shows the package description` | release.yml metadata-action labels expansion + build-push-action annotations wiring; CHANGELOG entry note |
 
 ## [v3.10.13-19] -- Phase 5: BouncyCastle 1.60 -> 1.84 (jdk15on -> jdk18on)
 

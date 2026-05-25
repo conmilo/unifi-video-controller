@@ -53,6 +53,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # docker/metadata-action auto-generates manifest-level annotations
+      # from the labels listed here (the org.opencontainers.image.* set).
+      # The description is the load-bearing one for the GHCR package page,
+      # which reads from manifest annotations rather than image-config
+      # labels.  The Dockerfile's own LABEL org.opencontainers.image.* set
+      # still applies to the image config (visible via `docker inspect`)
+      # but those don't bubble up to the registry UI.
       - name: docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -64,7 +71,13 @@ jobs:
             type=sha,format=short,prefix=sha-
           labels: |
             org.opencontainers.image.title=UniFi Video Controller (modernized)
+            org.opencontainers.image.description=UniFi Video 3.10.13 on Ubuntu 24.04 + OpenJDK 21 LTS + MongoDB 4.4 (with 4.0->4.2->4.4 fCV migration); airvision identifier rewrite + Tomcat 9 Bootstrap shim applied at runtime by uv-patcher
             org.opencontainers.image.version=${{ steps.tag.outputs.name }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/README.md
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.vendor=conmilo
 
       # Push only (no load:) -- provenance + SBOM attestations produce a
       # multi-platform manifest list that the docker exporter cannot load
@@ -78,6 +91,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
