@@ -6,6 +6,86 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-21] -- complete the GHCR manifest-annotations fix that v3.10.13-20 started
+
+### TL;DR
+
+Hotfix.  v3.10.13-20 attempted to fix the missing GHCR package
+description by adding an `annotations: ${{ steps.meta.outputs.annotations }}`
+wire-up in `release.yml`'s `docker/build-push-action` step, but the
+fix was incomplete in two ways:
+
+1. **`metadata-action` does NOT derive annotations from the `labels:`
+   input.**  Empirically verified in the v3.10.13-20 release log: the
+   `--label org.opencontainers.image.title=UniFi Video Controller
+   (modernized)` flag was emitted correctly, but the parallel
+   `--annotation manifest:org.opencontainers.image.title=unifi-video-controller`
+   used the auto-generated GitHub repo name, NOT the custom label.
+   Same for description (`Docker for Unifi-Video Controller (Ubiquiti
+   Networks)` -- the GitHub repo description -- instead of our UV
+   3.10.13 line).  Fix: add an explicit `annotations:` input to
+   `metadata-action` that mirrors the `labels:` block.
+
+2. **Annotations defaulted to manifest level only, not index level.**
+   GHCR's package UI reads from the multi-arch image index for images
+   with provenance + SBOM attestations (which we ship).  v3.10.13-20's
+   manifest had annotations, but the **index** had none.  Fix: set
+   `DOCKER_METADATA_ANNOTATIONS_LEVELS=manifest,index` env var on the
+   `metadata-action` step.
+
+**Zero behavioural change.**  Container image bytes are identical to
+v3.10.13-20 (the Dockerfile is unchanged); only the OCI manifest /
+index annotations differ.  Trivy alert count: unchanged at **3**.
+
+### Why this is a separate release
+
+`release.yml` reads itself from the tagged commit (`actions/checkout`
+with `ref: ${{ steps.tag.outputs.name }}`), so re-running the workflow
+against the existing `v3.10.13-20` tag would still execute the
+broken workflow.  The fix has to land on a new commit and ship as a
+new tag.  v3.10.13-21 is the next patch level per the established
+versioning pattern (`v3.10.13-N`).
+
+### Changed
+
+- **`.github/workflows/release.yml`**:
+  - Adds an explicit `annotations:` input to `docker/metadata-action`
+    that mirrors the `labels:` block for the eight `org.opencontainers.image.*`
+    keys (title, description, version, source, url, documentation,
+    licenses, vendor).
+  - Adds `env: DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index`
+    on the `metadata-action` step so annotations propagate to both
+    the per-platform manifest and the multi-arch index.
+  - Comment block above the step now spells out the two-input gotcha
+    (`labels` and `annotations` are independent) plus the
+    manifest-vs-index level distinction, so the next maintainer
+    doesn't burn an hour re-deriving this empirically.
+
+### Verification (post-release)
+
+After this PR merges and `v3.10.13-21` is tagged + the release
+workflow runs, the manifest list at
+`ghcr.io/conmilo/unifi-video-controller:v3.10.13-21` should carry:
+
+```text
+$ curl -sL \
+    -H "Accept: application/vnd.oci.image.index.v1+json" \
+    -H "Authorization: Bearer $(curl -s \
+        'https://ghcr.io/token?scope=repository:conmilo/unifi-video-controller:pull' \
+        | jq -r .token)" \
+    'https://ghcr.io/v2/conmilo/unifi-video-controller/manifests/v3.10.13-21' \
+    | jq '.annotations'
+{
+  "org.opencontainers.image.title": "UniFi Video Controller (modernized)",
+  "org.opencontainers.image.description": "UniFi Video 3.10.13 on Ubuntu 24.04 + OpenJDK 21 LTS + MongoDB 4.4 (with 4.0->4.2->4.4 fCV migration); airvision identifier rewrite + Tomcat 9 Bootstrap shim applied at runtime by uv-patcher",
+  ...
+}
+```
+
+GHCR package page at
+<https://github.com/conmilo/unifi-video-controller/pkgs/container/unifi-video-controller>
+should render the description string verbatim.
+
 ## [v3.10.13-20] -- strip MongoDB 4.2 dist to mongod-only + parameterise MongoDB versions
 
 ### TL;DR
