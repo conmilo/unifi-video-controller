@@ -1,10 +1,22 @@
 # Phase 5 roadmap: BouncyCastle + Guava (medium-CVE residuals)
 
-> **Status (2026-05-25):** Phase 5 SHIPPED in `v3.10.13-19` -- see
-> CHANGELOG entry for what landed.  Bumped to **1.84** (not the 1.78.1
-> originally scoped here; 1.84 was the current latest at PR time).
-> `bcprov-ext` and `bctls` were retired entirely rather than bumped
-> (rationale in CHANGELOG).  Phase 6 (Guava + Guice) remains open.
+> **Status (2026-05-25):** Phase 5 SHIPPED in `v3.10.13-19`, Phase 6
+> CLOSED (audit-based suppression) in `v3.10.13-23`.  See respective
+> CHANGELOG entries for what landed.
+>
+> - **Phase 5:** Bumped to **1.84** (not the 1.78.1 originally scoped
+>   here; 1.84 was the current latest at PR time).  `bcprov-ext` and
+>   `bctls` were retired entirely rather than bumped (rationale in
+>   CHANGELOG).
+> - **Phase 6:** The full Path 1 bump (Guice 5.1 + Guava 32) described
+>   below was DEFERRED.  Instead `v3.10.13-23` shipped a JAR-bytecode
+>   reachability audit (`docs/PHASE-6-AUDIT.md`,
+>   `docs/audit-guava-phase6.py`) that found zero callers of the three
+>   vulnerable Guava APIs across all 104 shipped JARs and suppressed
+>   the alerts in `.trivyignore`.  The Path 1 plan below is preserved
+>   for future use -- if a new Guava CVE lands that DOES intersect
+>   airvision's actually-used API surface, the audit will surface a
+>   hit and Path 1 becomes mandatory.
 >
 > **Original status (2026-05-24):** assessment only.  Phase 4
 > (`v3.10.13-16`) closed the low-risk medium/low CVE sweep and
@@ -146,6 +158,11 @@ soak observation period.
 ---
 
 ## Phase 6 -- Guava 14.0.1 -> 32+ (3 alerts) + Guice 3.0 -> 5.1.0
+
+> **Closed by audit-based suppression in `v3.10.13-23`**, not by the
+> bump described below.  See top-of-doc status block + `docs/PHASE-6-AUDIT.md`.
+> The Path 1 plan in this section is preserved as a re-entry point in
+> case a future CVE forces the full bump.
 
 ### CVE inventory
 
