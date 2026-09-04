@@ -95,7 +95,7 @@ RUN set -eux; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.26.0/log4j-1.2-api-2.26.0.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j-impl/2.26.0/log4j-slf4j-impl-2.26.0.jar; \
     wget -q https://repo1.maven.org/maven2/commons-io/commons-io/2.18.0/commons-io-2.18.0.jar; \
-    wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.3/jackson-core-2.21.3.jar; \
+    wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.4/jackson-core-2.21.4.jar; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.12.7.2/jackson-databind-2.12.7.2.jar; \
     wget -q https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.12.7/jackson-annotations-2.12.7.jar; \
     wget -q https://repo1.maven.org/maven2/commons-beanutils/commons-beanutils/1.11.0/commons-beanutils-1.11.0.jar; \
@@ -104,11 +104,11 @@ RUN set -eux; \
     wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-jdk18on/1.84/bcpkix-jdk18on-1.84.jar; \
     wget -q https://repo1.maven.org/maven2/org/bouncycastle/bcutil-jdk18on/1.84/bcutil-jdk18on-1.84.jar; \
     wget -q https://repo1.maven.org/maven2/com/googlecode/owasp-java-html-sanitizer/owasp-java-html-sanitizer/20260101.1/owasp-java-html-sanitizer-20260101.1.jar; \
-    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-core/9.0.118/tomcat-embed-core-9.0.118.jar; \
-    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-el/9.0.118/tomcat-embed-el-9.0.118.jar; \
-    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-jasper/9.0.118/tomcat-embed-jasper-9.0.118.jar; \
-    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-websocket/9.0.118/tomcat-embed-websocket-9.0.118.jar; \
-    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/tomcat-dbcp/9.0.118/tomcat-dbcp-9.0.118.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-core/9.0.121/tomcat-embed-core-9.0.121.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-el/9.0.121/tomcat-embed-el-9.0.121.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-jasper/9.0.121/tomcat-embed-jasper-9.0.121.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-websocket/9.0.121/tomcat-embed-websocket-9.0.121.jar; \
+    wget -q https://repo1.maven.org/maven2/org/apache/tomcat/tomcat-dbcp/9.0.121/tomcat-dbcp-9.0.121.jar; \
     wget -q https://repo1.maven.org/maven2/org/apache/httpcomponents/httpclient/4.5.14/httpclient-4.5.14.jar; \
     wget -q https://repo1.maven.org/maven2/org/mindrot/jbcrypt/0.4/jbcrypt-0.4.jar; \
     sha256sum -c SHA256SUMS
@@ -575,6 +575,16 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 #                                       -57qq was re-scored to also cover
 #                                       2.19.0..<2.21.1, so bump to 2.21.3
 #                                       (current latest 2.x on Maven Central).
+#                                       v3.10.13-24 follow-up: 2.21.3 -> 2.21.4
+#                                       closes GHSA-r7wm-3cxj-wff9 (async parser
+#                                       maxNumberLength bypass via chunked digit
+#                                       accumulation, incomplete fix for an
+#                                       earlier number-length CVE). Isolated
+#                                       jackson-core bump per the established
+#                                       v3.10.13-12/-17 pattern; jackson-databind
+#                                       stays pinned (see the jackson-databind
+#                                       CVE-2026-54512/-54513 residual entry
+#                                       below and its CHANGELOG writeup).
 # - jackson-annotations 2.7.2 -> 2.12.7: lockstep with databind.
 # - jettison 1.1 -> 1.5.4:              closes CVE-2022-40150, -45685, -45693,
 #                                       CVE-2023-1436.
@@ -600,6 +610,18 @@ RUN ln -sf /bin/true /usr/local/bin/systemctl && \
 #                                       MongoDB not JDBC, so no Trivy CVEs were
 #                                       reported against 7.0.86; the bump keeps
 #                                       the inventory consistent.
+# - tomcat-embed-* / tomcat-dbcp        closes CVE-2026-65182 (CRITICAL --
+#   9.0.118 -> 9.0.121:                 security constraint bypass via improper
+#                                       access control), CVE-2026-65905 (DIGEST
+#                                       auth replay bypass), and CVE-2026-68525
+#                                       (FORM auth bypass -> unauthorized
+#                                       resource access).  Patch-level bump
+#                                       within the same 9.0.x line established
+#                                       by the Phase 2B swap; all five lockstep
+#                                       companions bumped together per the same
+#                                       "Tomcat 9.x requires same-version
+#                                       companions" rule as the original 7.0.86
+#                                       -> 9.0.118 jump. v3.10.13-24.
 # - tomcat-embed-logging-juli.jar:      REMOVED (no Tomcat 9 equivalent; juli
 #                                       classes ship inside tomcat-embed-core
 #                                       in 9.x).
@@ -661,15 +683,15 @@ COPY --from=fetcher /artifacts/log4j-slf4j-impl-2.26.0.jar                   /tm
 COPY --from=fetcher /artifacts/commons-io-2.18.0.jar                         /tmp/commons-io-2.18.0.jar
 COPY --from=fetcher /artifacts/commons-beanutils-1.11.0.jar                  /tmp/commons-beanutils-1.11.0.jar
 COPY --from=fetcher /artifacts/jackson-databind-2.12.7.2.jar                 /tmp/jackson-databind-2.12.7.2.jar
-COPY --from=fetcher /artifacts/jackson-core-2.21.3.jar                       /tmp/jackson-core-2.21.3.jar
+COPY --from=fetcher /artifacts/jackson-core-2.21.4.jar                       /tmp/jackson-core-2.21.4.jar
 COPY --from=fetcher /artifacts/jackson-annotations-2.12.7.jar                /tmp/jackson-annotations-2.12.7.jar
 COPY --from=fetcher /artifacts/json-sanitizer-1.2.3.jar                      /tmp/json-sanitizer-1.2.3.jar
 COPY --from=fetcher /artifacts/owasp-java-html-sanitizer-20260101.1.jar      /tmp/owasp-java-html-sanitizer-20260101.1.jar
-COPY --from=fetcher /artifacts/tomcat-embed-core-9.0.118.jar                 /tmp/tomcat-embed-core-9.0.118.jar
-COPY --from=fetcher /artifacts/tomcat-embed-el-9.0.118.jar                   /tmp/tomcat-embed-el-9.0.118.jar
-COPY --from=fetcher /artifacts/tomcat-embed-jasper-9.0.118.jar               /tmp/tomcat-embed-jasper-9.0.118.jar
-COPY --from=fetcher /artifacts/tomcat-embed-websocket-9.0.118.jar            /tmp/tomcat-embed-websocket-9.0.118.jar
-COPY --from=fetcher /artifacts/tomcat-dbcp-9.0.118.jar                       /tmp/tomcat-dbcp-9.0.118.jar
+COPY --from=fetcher /artifacts/tomcat-embed-core-9.0.121.jar                 /tmp/tomcat-embed-core-9.0.121.jar
+COPY --from=fetcher /artifacts/tomcat-embed-el-9.0.121.jar                   /tmp/tomcat-embed-el-9.0.121.jar
+COPY --from=fetcher /artifacts/tomcat-embed-jasper-9.0.121.jar               /tmp/tomcat-embed-jasper-9.0.121.jar
+COPY --from=fetcher /artifacts/tomcat-embed-websocket-9.0.121.jar            /tmp/tomcat-embed-websocket-9.0.121.jar
+COPY --from=fetcher /artifacts/tomcat-dbcp-9.0.121.jar                       /tmp/tomcat-dbcp-9.0.121.jar
 COPY --from=fetcher /artifacts/httpclient-4.5.14.jar                         /tmp/httpclient-4.5.14.jar
 COPY --from=fetcher /artifacts/jbcrypt-0.4.jar                               /tmp/jbcrypt-0.4.jar
 COPY --from=fetcher /artifacts/bcprov-jdk18on-1.84.jar                       /tmp/bcprov-jdk18on-1.84.jar
@@ -709,15 +731,15 @@ RUN set -eux; \
     install -m 400 -o unifi-video -g unifi-video /tmp/commons-io-2.18.0.jar                               ./commons-io-2.18.0.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/commons-beanutils-1.11.0.jar                        ./commons-beanutils-1.11.0.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/jackson-databind-2.12.7.2.jar                       ./jackson-databind-2.12.7.2.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/jackson-core-2.21.3.jar                             ./jackson-core-2.21.3.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/jackson-core-2.21.4.jar                             ./jackson-core-2.21.4.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/jackson-annotations-2.12.7.jar                      ./jackson-annotations-2.12.7.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/json-sanitizer-1.2.3.jar                            ./json-sanitizer-1.2.3.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/owasp-java-html-sanitizer-20260101.1.jar            ./owasp-java-html-sanitizer-20260101.1.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-core-9.0.118.jar                       ./tomcat-embed-core-9.0.118.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-el-9.0.118.jar                         ./tomcat-embed-el-9.0.118.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-jasper-9.0.118.jar                     ./tomcat-embed-jasper-9.0.118.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-websocket-9.0.118.jar                  ./tomcat-embed-websocket-9.0.118.jar; \
-    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-dbcp-9.0.118.jar                             ./tomcat-dbcp-9.0.118.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-core-9.0.121.jar                       ./tomcat-embed-core-9.0.121.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-el-9.0.121.jar                         ./tomcat-embed-el-9.0.121.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-jasper-9.0.121.jar                     ./tomcat-embed-jasper-9.0.121.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-embed-websocket-9.0.121.jar                  ./tomcat-embed-websocket-9.0.121.jar; \
+    install -m 400 -o unifi-video -g unifi-video /tmp/tomcat-dbcp-9.0.121.jar                             ./tomcat-dbcp-9.0.121.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/httpclient-4.5.14.jar                               ./httpclient-4.5.14.jar; \
     install -m 400 -o unifi-video -g unifi-video /tmp/jbcrypt-0.4.jar                                     ./jbcrypt-0.4.jar; \
     \
@@ -826,7 +848,7 @@ EXPOSE 1935/tcp 6666/tcp 7004/udp 7080/tcp 7442/tcp 7443/tcp \
 # init + one-time 4.0 -> 4.2 -> 4.4 fCV migration.  After that, /api/server
 # reachable on 7080.
 HEALTHCHECK --start-period=240s --interval=30s --timeout=10s --retries=3 \
-    CMD curl -fsk https://localhost:7443/ >/dev/null 2>&1 || exit 1
+    CMD ["/bin/sh", "-c", "curl -fsk https://localhost:7443/ >/dev/null 2>&1 || exit 1"]
 
 # -------- Entry ------------------------------------------------------------
 # tini is PID 1 so SIGTERM propagates correctly to the unifi-video children

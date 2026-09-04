@@ -33,7 +33,7 @@ call sites (in `com/ubnt/common/oOOO/A.<init>`) to the equivalent
 `System.setProperty("catalina.{base,home}", arg)` calls.  Tomcat 9 removed
 those instance methods (now static, no-arg, read from system properties
 or `user.dir`); rewriting the caller is what lets us run airvision on a
-pristine upstream `tomcat-embed-core-9.0.118.jar` from Maven Central
+pristine upstream `tomcat-embed-core-9.0.121.jar` from Maven Central
 **without** patching Tomcat itself.
 
 The Bootstrap call-site rewrite is, in practice, a no-op at the moment
@@ -62,7 +62,7 @@ start means:
   container, never in any published artefact.
 - A `docker pull` of the image's layer always retrieves the upstream bytes.
 
-`tomcat-embed-core-9.0.118.jar` is shipped pristine from Maven Central and
+`tomcat-embed-core-9.0.121.jar` is shipped pristine from Maven Central and
 **stays pristine** inside the running container too (since v3.10.13-15;
 earlier the build also injected a Bootstrap compatibility shim into it).
 Trivy fingerprints the JAR as upstream, no `.trivyignore` SHA1-mismatch
@@ -238,5 +238,5 @@ container start.
 - Rewrite airvision's `Bootstrap.setCatalinaBase` / `setCatalinaHome`
   call sites to `System.setProperty(...)` directly -- shipped in
   v3.10.13-15.  Retired the separate Tomcat Bootstrap shim and let
-  `tomcat-embed-core-9.0.118.jar` stay bit-pristine in the running
+  `tomcat-embed-core-9.0.121.jar` stay bit-pristine in the running
   container.  See `BootstrapCallSiteRewriter.java`.
