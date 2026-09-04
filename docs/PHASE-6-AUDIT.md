@@ -78,11 +78,11 @@ bcprov-jdk18on-1.84.jar          log4j-api-2.26.0.jar
 bcutil-jdk18on-1.84.jar          log4j-core-2.26.0.jar
 commons-beanutils-1.11.0.jar     log4j-slf4j-impl-2.26.0.jar
 commons-io-2.18.0.jar            owasp-java-html-sanitizer-20260101.1.jar
-httpclient-4.5.14.jar            tomcat-dbcp-9.0.118.jar
-jackson-annotations-2.12.7.jar   tomcat-embed-core-9.0.118.jar
-jackson-core-2.21.3.jar          tomcat-embed-el-9.0.118.jar
-jackson-databind-2.12.7.2.jar    tomcat-embed-jasper-9.0.118.jar
-jbcrypt-0.4.jar                  tomcat-embed-websocket-9.0.118.jar
+httpclient-4.5.14.jar            tomcat-dbcp-9.0.121.jar
+jackson-annotations-2.12.7.jar   tomcat-embed-core-9.0.121.jar
+jackson-core-2.21.4.jar          tomcat-embed-el-9.0.121.jar
+jackson-databind-2.12.7.2.jar    tomcat-embed-jasper-9.0.121.jar
+jbcrypt-0.4.jar                  tomcat-embed-websocket-9.0.121.jar
 json-sanitizer-1.2.3.jar
 ```
 
@@ -90,7 +90,7 @@ json-sanitizer-1.2.3.jar
 
 1 JAR / 1,093 classes.  Custom runtime patcher built from
 `uv-patcher/pom.xml`.  Declared dependencies: ASM 9.7 +
-jackson-databind 2.21.3 only (no Guava).  The shaded JAR ends up at
+jackson-databind 2.21.5 only (no Guava).  The shaded JAR ends up at
 `/opt/uv-patcher/uv-patcher.jar` in the runtime image; the patcher
 runs in its own JVM before `jsvc` launches UniFi Video.  Included
 in the scan for completeness.
@@ -184,7 +184,7 @@ for url in \
   https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.26.0/log4j-1.2-api-2.26.0.jar \
   https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j-impl/2.26.0/log4j-slf4j-impl-2.26.0.jar \
   https://repo1.maven.org/maven2/commons-io/commons-io/2.18.0/commons-io-2.18.0.jar \
-  https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.3/jackson-core-2.21.3.jar \
+  https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.4/jackson-core-2.21.4.jar \
   https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.12.7.2/jackson-databind-2.12.7.2.jar \
   https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.12.7/jackson-annotations-2.12.7.jar \
   https://repo1.maven.org/maven2/commons-beanutils/commons-beanutils/1.11.0/commons-beanutils-1.11.0.jar \
@@ -193,11 +193,11 @@ for url in \
   https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-jdk18on/1.84/bcpkix-jdk18on-1.84.jar \
   https://repo1.maven.org/maven2/org/bouncycastle/bcutil-jdk18on/1.84/bcutil-jdk18on-1.84.jar \
   https://repo1.maven.org/maven2/com/googlecode/owasp-java-html-sanitizer/owasp-java-html-sanitizer/20260101.1/owasp-java-html-sanitizer-20260101.1.jar \
-  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-core/9.0.118/tomcat-embed-core-9.0.118.jar \
-  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-el/9.0.118/tomcat-embed-el-9.0.118.jar \
-  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-jasper/9.0.118/tomcat-embed-jasper-9.0.118.jar \
-  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-websocket/9.0.118/tomcat-embed-websocket-9.0.118.jar \
-  https://repo1.maven.org/maven2/org/apache/tomcat/tomcat-dbcp/9.0.118/tomcat-dbcp-9.0.118.jar \
+  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-core/9.0.121/tomcat-embed-core-9.0.121.jar \
+  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-el/9.0.121/tomcat-embed-el-9.0.121.jar \
+  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-jasper/9.0.121/tomcat-embed-jasper-9.0.121.jar \
+  https://repo1.maven.org/maven2/org/apache/tomcat/embed/tomcat-embed-websocket/9.0.121/tomcat-embed-websocket-9.0.121.jar \
+  https://repo1.maven.org/maven2/org/apache/tomcat/tomcat-dbcp/9.0.121/tomcat-dbcp-9.0.121.jar \
   https://repo1.maven.org/maven2/org/apache/httpcomponents/httpclient/4.5.14/httpclient-4.5.14.jar \
   https://repo1.maven.org/maven2/org/mindrot/jbcrypt/0.4/jbcrypt-0.4.jar; do
   wget -q "$url"

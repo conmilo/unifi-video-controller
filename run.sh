@@ -149,6 +149,23 @@ critical_paths=(
     /var/lib/unifi-video/backup
     /var/lib/unifi-video/snapshot
 )
+# Create any critical path that doesn't exist yet. On a brand-new/empty
+# volume (first-ever `docker run`/`docker compose up` against a fresh
+# host directory or named volume) NONE of these exist -- nothing in the
+# image bakes them in, and migrate-mongo.sh intentionally treats a
+# missing db-wt as "nothing to migrate" rather than creating it. Without
+# this, mongod's own startup fails with "NonExistentPath: Data directory
+# ... not found" (mongod does not auto-create --dbpath) before
+# migrate-mongo.sh or unifi-video ever get a chance to run. mkdir -p is
+# idempotent, so this is a no-op on every subsequent (non-fresh) start.
+for d in "${critical_paths[@]}"; do
+    [[ -d "${d}" ]] && continue
+    echo "[info] Creating missing critical path ${d} (fresh volume)." | ts '%Y-%m-%d %H:%M:%.S'
+    if ! mkdir -p "${d}"; then
+        echo "[error] Unable to create ${d}. Refusing to continue." | ts '%Y-%m-%d %H:%M:%.S'
+        exit 1
+    fi
+done
 # Top-level (non-recursive) for the data dir itself + root-level files
 # (system.properties, keystore, cam-keystore, ufv-truststore, perms.txt).
 if ! chown "${PUID}":"${PGID}" /var/lib/unifi-video; then

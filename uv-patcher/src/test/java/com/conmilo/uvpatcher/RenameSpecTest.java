@@ -48,7 +48,7 @@ class RenameSpecTest {
                 spec.jarFilenameRenames().get("jackson-databind-2.7.4.jar"));
         assertEquals("owasp-java-html-sanitizer-20260101.1.jar",
                 spec.jarFilenameRenames().get("owasp-java-html-sanitizer-r239.jar"));
-        assertEquals("tomcat-embed-core-9.0.118.jar",
+        assertEquals("tomcat-embed-core-9.0.121.jar",
                 spec.jarFilenameRenames().get("tomcat-embed-core.jar"));
         // Empty-string => remove from Class-Path entirely.
         assertEquals("", spec.jarFilenameRenames().get("tomcat-embed-logging-juli.jar"));

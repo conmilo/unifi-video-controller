@@ -19,7 +19,7 @@ import org.objectweb.asm.Opcodes;
  * gives us two structural wins:
  *
  * <ul>
- *   <li>{@code tomcat-embed-core-9.0.118.jar} is no longer modified at
+ *   <li>{@code tomcat-embed-core-9.0.121.jar} is no longer modified at
  *       runtime; the running container's copy matches Maven Central's
  *       published bytes byte-for-byte.</li>
  *   <li>The fix is root-cause (rewrite the dangling instance-method call)

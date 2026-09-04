@@ -59,6 +59,61 @@ CVE-2018-10237
 CVE-2020-8908
 
 # -- end Guava 14.0.1 residuals ---------------------------------------------
+
+# -- jackson-databind 2.12.7.2 PTV-bypass residuals (Phase 7, v3.10.13-24) --
+#
+# jackson-databind is pinned at 2.12.7.2 because Mongojack 2.7.0 calls a
+# substantial set of jackson-databind INTERNAL APIs (BeanDeserializer,
+# BeanSerializerBase, DefaultSerializerProvider, TokenBuffer,
+# SettableBeanProperty, Annotated, etc.) whose ABI compatibility across the
+# 2.12 -> 2.18/2.21/3.x jump has not been verified -- see CHANGELOG
+# v3.10.13-10 for the Phase 2A empirical compatibility work that justified
+# pinning at 2.12.7.2 in the first place, and the v3.10.13-12 / v3.10.13-17
+# follow-ups that bump jackson-core in isolation instead (jackson-core's
+# public API surface is stable across 2.x minors; jackson-databind's is
+# not, given Mongojack's internal-API usage).
+#
+# CVE-2026-54512 and CVE-2026-54513 are both PolymorphicTypeValidator (PTV)
+# bypasses: they are only reachable when an ObjectMapper has polymorphic
+# typing enabled via `@JsonTypeInfo(use = Id.CLASS)` or `Id.MINIMAL_CLASS`
+# (or the equivalent `enableDefaultTyping()`/`activateDefaultTyping()` global
+# toggle) AND a PolymorphicTypeValidator is configured to gate it. Audited
+# both airvision's and Mongojack 2.7.0's decompiled sources for all three
+# preconditions -- zero hits. Audit script: docs/audit-jackson-ptv-phase7.py.
+#
+# airvision's only two `@JsonTypeInfo` usages (Event.java, UserGroup.java)
+# use `Id.NAME` with an explicit `@JsonSubTypes` allowlist of logical type
+# names -- a different, non-PTV-gated resolution path that never calls
+# DatabindContext._resolveAndValidateGeneric() or
+# BasicPolymorphicTypeValidator.Builder.allowIfSubTypeIsArray() (the two
+# vulnerable methods) at all. No ObjectMapper construction site in either
+# airvision or Mongojack calls enableDefaultTyping/activateDefaultTyping,
+# and MongoJackModule.configure() only registers BSON type serializers/
+# deserializers (ObjectId, DBRef, etc.) -- no polymorphic typing, no PTV.
+
+# CVE-2026-54512 (high, CVSS 8.1 AV:N/AC:H) -- PolymorphicTypeValidator
+# bypass via generic type parameters (e.g. java.util.ArrayList<Evil>
+# smuggles Evil past an ArrayList-only allowlist). Requires Id.CLASS/
+# Id.MINIMAL_CLASS polymorphic typing + a configured PTV -- neither present
+# anywhere in airvision or Mongojack 2.7.0. Fixed in 2.18.8 / 2.21.4 / 3.1.4.
+# https://github.com/advisories/GHSA-j3rv-43j4-c7qm
+CVE-2026-54512
+
+# CVE-2026-54513 (high, CVSS 8.1 AV:N/AC:H) -- PolymorphicTypeValidator
+# bypass via array component type (BasicPolymorphicTypeValidator.Builder.
+# allowIfSubTypeIsArray() allowlists any array by clazz.isArray() without
+# checking the element type). Same precondition and same audit verdict as
+# CVE-2026-54512: zero reachable trigger. Fixed in 2.18.8 / 2.21.4 / 3.1.4.
+# https://nvd.nist.gov/vuln/detail/CVE-2026-54513
+CVE-2026-54513
+
+# -- end jackson-databind 2.12.7.2 PTV-bypass residuals ---------------------
+#
+# If a future change adds polymorphic typing (Id.CLASS/Id.MINIMAL_CLASS) or
+# a PolymorphicTypeValidator anywhere in airvision or a dependency, re-run
+# docs/audit-jackson-ptv-phase7.py; a non-zero exit means these two
+# suppressions must be reconsidered (and likely means jackson-databind needs
+# the full Phase-2A-style compatibility bump instead).
 #
 # If a future change reintroduces a manually-installed deb/rpm in the
 # runtime image and Trivy starts reporting false positives, add new

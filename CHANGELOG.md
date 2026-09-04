@@ -6,6 +6,133 @@ All notable changes to this fork are documented here. Format follows
 `v3.10.13-1` for the initial modernization, `v3.10.13-1.2026-06` for a
 monthly auto-rebuild without code changes).
 
+## [v3.10.13-24] -- Phase 7 CVE sweep: jackson-core + Tomcat 9 patch bumps, jackson-databind PTV audit, fresh-volume mongod fix, hadolint DL3025
+
+### TL;DR
+
+Four independent fixes, all discovered while investigating a newly-red CI
+run against `main` (hadolint-action + trivy-action dependency bumps
+surfaced new findings that weren't visible under the older tool versions):
+
+1. **`jackson-core` 2.21.3 -> 2.21.4** -- closes `GHSA-r7wm-3cxj-wff9`
+   (HIGH; async parser `maxNumberLength` bypass via chunked digit
+   accumulation, an incomplete fix for an earlier number-length CVE).
+   Isolated bump per the established v3.10.13-12/-17 pattern.
+
+2. **`jackson-databind` CVE-2026-54512 + CVE-2026-54513 (both HIGH)** --
+   audit-based suppression, NOT a version bump. Both CVEs are
+   `PolymorphicTypeValidator` bypasses only reachable when an
+   `ObjectMapper` has `Id.CLASS`/`Id.MINIMAL_CLASS` polymorphic typing
+   enabled with a PTV configured. Audited airvision's and Mongojack
+   2.7.0's decompiled sources for all three preconditions
+   (`enableDefaultTyping`/`activateDefaultTyping`, any
+   `PolymorphicTypeValidator` reference, any `Id.CLASS`/`Id.MINIMAL_CLASS`
+   `@JsonTypeInfo` usage) -- zero hits. airvision's only two
+   `@JsonTypeInfo` usages (`Event`, `UserGroup`) use `Id.NAME` with an
+   explicit `@JsonSubTypes` allowlist, a different resolution path that
+   never invokes either vulnerable method. `jackson-databind` stays
+   pinned at 2.12.7.2 (see the v3.10.13-10 Phase 2A compatibility
+   rationale -- Mongojack 2.7.0 depends on internal databind APIs whose
+   ABI stability across the 2.12 -> 2.18/2.21/3.x jump is unverified).
+   Audit script: `docs/audit-jackson-ptv-phase7.py`.
+
+3. **`tomcat-embed-core` / `-el` / `-jasper` / `-websocket` / `tomcat-dbcp`
+   9.0.118 -> 9.0.121** -- closes `CVE-2026-65182` (CRITICAL; security
+   constraint bypass via improper access control), `CVE-2026-65905`
+   (DIGEST auth replay bypass), and `CVE-2026-68525` (FORM auth bypass
+   -> unauthorized resource access). Patch-level bump within the same
+   9.0.x line established by the original Phase 2B swap; all five
+   lockstep companions bumped together.
+
+4. **Fresh-volume `mongod` startup fix (`run.sh`)** -- a brand-new/empty
+   data volume (first-ever `docker run`/`docker compose up`) previously
+   failed at `mongod` startup with `NonExistentPath: Data directory
+   /usr/lib/unifi-video/data/db-wt not found`, because nothing in the
+   image or `migrate-mongo.sh` creates that directory on a genuinely
+   fresh volume (`migrate-mongo.sh` treats a missing `db-wt` as "nothing
+   to migrate" and returns; `mongod` itself does not auto-create
+   `--dbpath`). Confirmed pre-existing by reproducing the identical
+   failure against the published `v3.10.13-23` image with a fresh empty
+   bind mount. Fix: `run.sh`'s existing `critical_paths` array (already
+   used for the ownership pass) now `mkdir -p`s any path that doesn't
+   exist yet, before the chown pass runs. Idempotent -- a no-op on every
+   subsequent (non-fresh) start.
+
+5. **Hadolint `DL3025` (Dockerfile `HEALTHCHECK`)** -- the
+   `hadolint/hadolint-action` bump from 3.3.0 to 3.5.0 (dependency-bot
+   PR #16) pulled in hadolint v2.15.1, which now flags the
+   `HEALTHCHECK`'s shell-form `CMD` as a warning (and
+   `failure-threshold: warning` fails the whole job on any warning).
+   Fixed by wrapping the same shell pipeline in explicit JSON array
+   notation: `CMD ["/bin/sh", "-c", "curl -fsk https://localhost:7443/
+   >/dev/null 2>&1 || exit 1"]`. Behavior is unchanged.
+
+### Files changed
+
+- `Dockerfile` -- jackson-core and tomcat-embed-*/tomcat-dbcp fetcher
+  URLs, `COPY --from=fetcher` lines, and `install -m 400` lines bumped
+  to the new versions; comment blocks above both extended with the
+  follow-up bump rationale; `HEALTHCHECK` switched to JSON array
+  notation.
+- `checksums/SHA256SUMS` -- new SHA256 digests for
+  `jackson-core-2.21.4.jar` and the five bumped Tomcat 9.0.121 JARs,
+  verified against Maven Central.
+- `.trivyignore` -- new "jackson-databind 2.12.7.2 PTV-bypass residuals"
+  section with the audit rationale and both CVE entries.
+- `docs/audit-jackson-ptv-phase7.py` -- new audit script (grep-based
+  reachability check across the decompiled sources for
+  `enableDefaultTyping`/`activateDefaultTyping`,
+  `PolymorphicTypeValidator`, and unsafe `@JsonTypeInfo` usages).
+- `docs/PHASE-6-AUDIT.md` -- reproducibility wget block updated to fetch
+  the current jackson-core/tomcat versions (so future re-runs of the
+  Guava audit don't accidentally pull stale, now-vulnerable JARs); one
+  stale jackson-databind version note corrected (uv-patcher's own build
+  dependency, unrelated to the runtime-shipped JAR, is 2.21.5 not
+  2.21.3).
+- `uv-patcher/src/main/resources/airvision-renames.json` -- rename-map
+  target filenames updated for jackson-core and the five Tomcat JARs.
+- `uv-patcher/src/test/java/com/conmilo/uvpatcher/RenameSpecTest.java`
+  -- spot-check assertion updated to the new tomcat-embed-core filename.
+- `uv-patcher/README.md`,
+  `uv-patcher/src/main/java/com/conmilo/uvpatcher/BootstrapCallSiteRewriter.java`
+  -- present-tense architecture descriptions updated to the new
+  tomcat-embed-core filename.
+- `run.sh` -- `critical_paths` array now backed by a `mkdir -p` pass
+  before the ownership pass.
+
+### Verification
+
+- `docker buildx build --load` succeeds; hadolint (exact
+  `ghcr.io/hadolint/hadolint:v2.15.1-debian` binary hadolint-action
+  v3.5.0 uses) exits 0 with zero findings.
+- `trivy image --severity HIGH,CRITICAL --ignore-unfixed --vuln-type
+  os,library --ignorefile .trivyignore` against a **fresh, no-cache**
+  build: 0 findings (confirmed a cached-layer build showed spurious
+  stale OS-package CVEs -- kernel/openssl -- that a fresh build resolves
+  automatically via apt's normal upgrade path; not part of this
+  release's actual fix set).
+- `python3 docs/audit-jackson-ptv-phase7.py`: zero hits across both
+  decompiled trees (airvision + Mongojack).
+- uv-patcher rewrite verified end-to-end: `airvision.jar`'s rewritten
+  `MANIFEST.MF` Class-Path correctly resolves to
+  `jackson-core-2.21.4.jar` and `tomcat-embed-core-9.0.121.jar` (992
+  classes processed, 174 renames, 1608 method/field references
+  rewritten -- same counts as before the version bumps, confirming the
+  rewrite logic itself is unaffected).
+- End-to-end smoke against a **fresh, empty data volume**: `mongod`
+  starts (previously failed -- see fix #4 above), `unifi-video` starts,
+  container reaches `healthy`, `GET /` -> `200`.
+
+### Residuals
+
+- **jackson-databind 2.12.7.2** stays pinned; CVE-2026-54512/-54513
+  suppressed via reachability audit rather than closed via version
+  bump. Re-audit required (`docs/audit-jackson-ptv-phase7.py`) if a
+  future change adds polymorphic typing or a `PolymorphicTypeValidator`
+  anywhere in airvision or a dependency.
+
+---
+
 ## [v3.10.13-23] -- Phase 6 closed: Guava 14.0.1 reachability audit + `.trivyignore` suppression
 
 ### TL;DR
