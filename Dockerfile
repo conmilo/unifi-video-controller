@@ -826,7 +826,7 @@ EXPOSE 1935/tcp 6666/tcp 7004/udp 7080/tcp 7442/tcp 7443/tcp \
 # init + one-time 4.0 -> 4.2 -> 4.4 fCV migration.  After that, /api/server
 # reachable on 7080.
 HEALTHCHECK --start-period=240s --interval=30s --timeout=10s --retries=3 \
-    CMD curl -fsk https://localhost:7443/ >/dev/null 2>&1 || exit 1
+    CMD ["/bin/sh", "-c", "curl -fsk https://localhost:7443/ >/dev/null 2>&1 || exit 1"]
 
 # -------- Entry ------------------------------------------------------------
 # tini is PID 1 so SIGTERM propagates correctly to the unifi-video children
