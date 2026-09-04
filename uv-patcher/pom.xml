@@ -32,7 +32,7 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <asm.version>9.7</asm.version>
-        <jackson.version>2.21.3</jackson.version>
+        <jackson.version>2.21.5</jackson.version>
         <junit.version>5.10.3</junit.version>
     </properties>
 
